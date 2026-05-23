@@ -1,0 +1,5 @@
+.env
+bin/
+*.pem
+*.key
+go.sum

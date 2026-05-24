@@ -40,7 +40,7 @@ func Load() (*Config, error) {
 		MQTTCACertFile:      env("MQTT_CA_CERT_FILE", ""),
 		DeviceMQTTBrokerURI: env("DEVICE_MQTT_BROKER_URI", ""),
 		FactoryProvToken:    env("FACTORY_PROV_TOKEN", ""),
-		CloudPubkeyHex:      must("CLOUD_PUBKEY_HEX"),
+		CloudPubkeyHex:      env("CLOUD_PUBKEY_HEX", ""),
 	}
 
 	if c.DeviceMQTTBrokerURI == "" {

@@ -128,7 +128,98 @@ curl http://localhost:8080/health
 
 ---
 
-## 9. Sync from Git (after local changes)
+## 9. Smoke Test — End-to-End ZTP Flow
+
+After the server is running, verify the full provisioning path works.
+
+### 9a. Insert a test tenant
+
+```bash
+psql -U setu -d setucore -h localhost << 'EOF'
+INSERT INTO tenants (tid, name, api_key_hash)
+VALUES (
+  'dev',
+  'Dev Tenant',
+  '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lChG'
+);
+EOF
+```
+
+> `api_key_hash` is bcrypt of `devkey123`. Use this API key with `POST /auth/token` to get a JWT.
+
+### 9b. Insert a test device into inventory
+
+```bash
+psql -U setu -d setucore -h localhost << 'EOF'
+INSERT INTO device_inventory (mac, tid, did, pid, mq_user, mq_pass, hw_config)
+VALUES (
+  'aabbccddeeff',
+  'dev',
+  'dev001testdid01',
+  'sp1',
+  'dev.dev001testdid01',
+  'SetuMQTTPass123',
+  '{"relay":{"dp_id":1,"gpio":21},"button":{"dp_id":2,"gpio":9}}'
+);
+EOF
+```
+
+### 9c. Call the ZTP endpoint (simulates device first boot)
+
+```bash
+curl -s -X POST http://187.127.166.16:8080/factory/provision \
+  -H 'Content-Type: application/json' \
+  -H 'X-Factory-Token: 1f372790aadb44503d09fd1129788d72b1674ccc08332d8b36f8bbe210bafd08' \
+  -d '{"mac":"aa:bb:cc:dd:ee:ff"}'
+```
+
+Expected response (identity bundle sent to device):
+
+```json
+{
+  "did": "dev001testdid01",
+  "tid": "dev",
+  "pid": "sp1",
+  "mq_user": "dev.dev001testdid01",
+  "mq_pass": "SetuMQTTPass123",
+  "mq_uri": "mqtts://187.127.166.16:8883",
+  "cloud_pubkey": "",
+  "hw_config": {
+    "relay": {"gpio": 21, "dp_id": 1},
+    "button": {"gpio": 9, "dp_id": 2}
+  }
+}
+```
+
+### 9d. Verify device was registered in `devices` table
+
+```bash
+psql -U setu -d setucore -h localhost -c \
+  "SELECT did, tid, pid, is_online, registered_at FROM devices WHERE tid='dev';"
+```
+
+### 9e. Verify inventory entry is marked provisioned
+
+```bash
+psql -U setu -d setucore -h localhost -c \
+  "SELECT mac, did, provisioned_at FROM device_inventory WHERE mac='aabbccddeeff';"
+```
+
+`provisioned_at` should now have a timestamp (no longer NULL).
+
+### 9f. Get a JWT token
+
+```bash
+curl -s -X POST http://187.127.166.16:8080/auth/token \
+  -H 'Content-Type: application/json' \
+  -d '{"tid":"dev","api_key":"devkey123"}'
+```
+
+Use the returned token as `Authorization: Bearer <token>` for all `/devices` endpoints.
+
+---
+
+## 10. Sync from Git (after local changes)
 
 ```bash
 cd /root/viral/setu-cloud

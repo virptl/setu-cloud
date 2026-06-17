@@ -11,10 +11,10 @@ import (
 
 // client represents one connected WebSocket client.
 type client struct {
-	tid    string
-	did    string // empty = subscribe to all devices in tenant
-	conn   *websocket.Conn
-	send   chan []byte
+	tid  string
+	did  string // empty = subscribe to all devices in tenant
+	conn *websocket.Conn
+	send chan []byte
 }
 
 // Hub manages WebSocket clients and fans out Redis Pub/Sub messages.

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 )
@@ -27,37 +28,49 @@ func New(db *pgxpool.Pool, cache *redis.Client) *Service {
 	return &Service{db: db, cache: cache}
 }
 
-// redisKey returns the Redis key for a device's full reported shadow JSON.
 func redisKey(tid, did string) string {
 	return fmt.Sprintf("shadow:%s:%s", tid, did)
 }
 
 // UpdateReported updates reported state from a /up rpt message.
-// d is the `d` field from the envelope: {"1":true,"2":75} etc.
+// All DP upserts are sent as a single batch (one TCP round-trip) instead
+// of N sequential round-trips.
 func (s *Service) UpdateReported(ctx context.Context, tid, did string, d json.RawMessage) error {
 	var dps map[string]json.RawMessage
 	if err := json.Unmarshal(d, &dps); err != nil {
 		return fmt.Errorf("unmarshal rpt dps: %w", err)
 	}
+	if len(dps) == 0 {
+		return nil
+	}
 
+	batch := &pgx.Batch{}
 	for dpIDStr, val := range dps {
 		var dpID int
 		fmt.Sscanf(dpIDStr, "%d", &dpID)
 		if dpID < 1 {
 			continue
 		}
-		if _, err := s.db.Exec(ctx, `
+		batch.Queue(`
 			INSERT INTO shadows (tid, did, dp_id, reported_value, updated_at)
 			VALUES ($1, $2, $3, $4, NOW())
 			ON CONFLICT (tid, did, dp_id) DO UPDATE
 			  SET reported_value = EXCLUDED.reported_value,
-			      updated_at = NOW()
-		`, tid, did, dpID, []byte(val)); err != nil {
+			      updated_at     = NOW()
+		`, tid, did, dpID, []byte(val))
+	}
+
+	br := s.db.SendBatch(ctx, batch)
+	for i := 0; i < batch.Len(); i++ {
+		if _, err := br.Exec(); err != nil {
+			br.Close()
 			return err
 		}
 	}
+	if err := br.Close(); err != nil {
+		return err
+	}
 
-	// Refresh Redis cache with the full reported state.
 	return s.refreshCache(ctx, tid, did)
 }
 
@@ -91,7 +104,7 @@ func (s *Service) SetDesired(ctx context.Context, tid, did string, dpID int, val
 		VALUES ($1, $2, $3, $4, NOW())
 		ON CONFLICT (tid, did, dp_id) DO UPDATE
 		  SET desired_value = EXCLUDED.desired_value,
-		      updated_at = NOW()
+		      updated_at    = NOW()
 	`, tid, did, dpID, []byte(value)); err != nil {
 		return err
 	}

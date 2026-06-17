@@ -10,9 +10,22 @@ import (
 	pahomqtt "github.com/eclipse/paho.mqtt.golang"
 )
 
+// Option configures the Paho MQTT client before connecting.
+type Option func(*pahomqtt.ClientOptions)
+
+// WithLWT registers a Last Will & Testament message.
+// EMQX publishes this automatically to topic when the client disconnects
+// unexpectedly (TCP drop, power loss, network failure).
+// QoS 1, non-retained — delivered once to all current subscribers.
+func WithLWT(topic string, payload []byte) Option {
+	return func(opts *pahomqtt.ClientOptions) {
+		opts.SetWill(topic, string(payload), 1, false)
+	}
+}
+
 // NewClient creates and connects a Paho MQTT client.
-// caCertFile may be empty — if so, TLS uses the system root pool.
-func NewClient(brokerURL, clientID, username, password, caCertFile string) (pahomqtt.Client, error) {
+// caCertFile may be empty — TLS uses the system root pool in that case.
+func NewClient(brokerURL, clientID, username, password, caCertFile string, options ...Option) (pahomqtt.Client, error) {
 	opts := pahomqtt.NewClientOptions()
 	opts.AddBroker(brokerURL)
 	opts.SetClientID(clientID)
@@ -32,6 +45,10 @@ func NewClient(brokerURL, clientID, username, password, caCertFile string) (paho
 		return nil, err
 	}
 	opts.SetTLSConfig(tlsCfg)
+
+	for _, o := range options {
+		o(opts)
+	}
 
 	client := pahomqtt.NewClient(opts)
 	token := client.Connect()

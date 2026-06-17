@@ -34,29 +34,56 @@ func New(db *pgxpool.Pool, cache *redis.Client) *Service {
 	return &Service{db: db, cache: cache}
 }
 
+func onlineKey(tid, did string) string {
+	return fmt.Sprintf("online:%s:%s", tid, did)
+}
+
+// SetOnlineCached records online state in Redis.
+//
+// online=true:  key is set with NO expiry. The device stays online until an
+//   explicit offline signal (LWT, clean shutdown, $SYS disconnect event).
+//   We no longer rely on TTL expiry because idle devices (no DP changes) never
+//   refresh their /shd, so a TTL would falsely mark them offline.
+//
+// online=false: key is deleted immediately.
+func (s *Service) SetOnlineCached(ctx context.Context, tid, did string, online bool) error {
+	if online {
+		return s.cache.Set(ctx, onlineKey(tid, did), "1", 0).Err() // 0 = no expiry
+	}
+	return s.cache.Del(ctx, onlineKey(tid, did)).Err()
+}
+
+// IsOnlineCached checks the Redis TTL key — O(1), no DB round-trip.
+func (s *Service) IsOnlineCached(ctx context.Context, tid, did string) bool {
+	n, _ := s.cache.Exists(ctx, onlineKey(tid, did)).Result()
+	return n > 0
+}
+
 // Upsert inserts or updates a device record. Called on reg/boo.
+// Also sets is_online=true in Postgres so the persistent record is correct.
 func (s *Service) Upsert(ctx context.Context, tid, did, pid, fwVer string, rssi int) error {
 	_, err := s.db.Exec(ctx, `
 		INSERT INTO devices (tid, did, pid, fw_version, rssi, is_online, registered_at, last_seen_at)
 		VALUES ($1, $2, $3, $4, $5, true, NOW(), NOW())
 		ON CONFLICT (tid, did) DO UPDATE
-		  SET fw_version  = EXCLUDED.fw_version,
-		      rssi        = EXCLUDED.rssi,
-		      is_online   = true,
+		  SET fw_version   = EXCLUDED.fw_version,
+		      rssi         = EXCLUDED.rssi,
+		      is_online    = true,
 		      last_seen_at = NOW()
 	`, tid, did, pid, fwVer, rssi)
 	return err
 }
 
-// SetOnline updates the is_online flag and last_seen_at timestamp.
+// SetOnline updates the is_online flag in Postgres.
+// Only call this on explicit boo/reg events — not on every /shd.
 func (s *Service) SetOnline(ctx context.Context, tid, did string, online bool) error {
-	_, err := s.db.Exec(ctx, `
-		UPDATE devices SET is_online=$1, last_seen_at=NOW() WHERE tid=$2 AND did=$3
-	`, online, tid, did)
+	_, err := s.db.Exec(ctx,
+		`UPDATE devices SET is_online=$1, last_seen_at=NOW() WHERE tid=$2 AND did=$3`,
+		online, tid, did)
 	return err
 }
 
-// Get returns a single device. Returns pgx.ErrNoRows if not found.
+// Get returns a single device. is_online is overridden from Redis if available.
 func (s *Service) Get(ctx context.Context, tid, did string) (*Device, error) {
 	var d Device
 	err := s.db.QueryRow(ctx, `
@@ -71,10 +98,15 @@ func (s *Service) Get(ctx context.Context, tid, did string) (*Device, error) {
 	if err == pgx.ErrNoRows {
 		return nil, fmt.Errorf("device %s/%s not found", tid, did)
 	}
-	return &d, err
+	if err != nil {
+		return nil, err
+	}
+	// Override with fresh Redis signal — more accurate than the DB flag.
+	d.IsOnline = s.IsOnlineCached(ctx, tid, did)
+	return &d, nil
 }
 
-// List returns all devices for a tenant.
+// List returns all devices for a tenant with online status from Redis.
 func (s *Service) List(ctx context.Context, tid string) ([]Device, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT tid, did, pid, COALESCE(fw_version,''), COALESCE(ip,''),
@@ -97,6 +129,8 @@ func (s *Service) List(ctx context.Context, tid string) ([]Device, error) {
 		); err != nil {
 			return nil, err
 		}
+		// Override is_online from Redis for each device.
+		d.IsOnline = s.IsOnlineCached(ctx, d.TID, d.DID)
 		devices = append(devices, d)
 	}
 	return devices, rows.Err()

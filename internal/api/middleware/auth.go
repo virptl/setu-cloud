@@ -15,20 +15,64 @@ const tidKey contextKey = "tid"
 // Claims is the JWT payload.
 type Claims struct {
 	TID  string `json:"tid"`
+	UID  string `json:"uid,omitempty"`
 	Role string `json:"role"`
 	jwt.RegisteredClaims
+}
+
+const uidKey contextKey = "uid"
+
+// AuthUser validates a consumer (app user) JWT and injects tid + uid.
+func AuthUser(secret string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			tokenStr := bearerToken(r)
+			if tokenStr == "" {
+				http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+				return
+			}
+			claims := &Claims{}
+			_, err := jwt.ParseWithClaims(tokenStr, claims,
+				func(t *jwt.Token) (interface{}, error) {
+					if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+						return nil, jwt.ErrSignatureInvalid
+					}
+					return []byte(secret), nil
+				})
+			if err != nil || claims.UID == "" {
+				http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+				return
+			}
+			ctx := context.WithValue(r.Context(), tidKey, claims.TID)
+			ctx = context.WithValue(ctx, uidKey, claims.UID)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+// UIDFromContext extracts the user ID injected by AuthUser middleware.
+func UIDFromContext(ctx context.Context) string {
+	uid, _ := ctx.Value(uidKey).(string)
+	return uid
+}
+
+// bearerToken extracts a JWT from the Authorization header or ?token= query param.
+func bearerToken(r *http.Request) string {
+	if raw := r.Header.Get("Authorization"); strings.HasPrefix(raw, "Bearer ") {
+		return strings.TrimPrefix(raw, "Bearer ")
+	}
+	return r.URL.Query().Get("token")
 }
 
 // Auth validates a Bearer JWT and injects tid into the request context.
 func Auth(secret string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			raw := r.Header.Get("Authorization")
-			if !strings.HasPrefix(raw, "Bearer ") {
+			tokenStr := bearerToken(r)
+			if tokenStr == "" {
 				http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 				return
 			}
-			tokenStr := strings.TrimPrefix(raw, "Bearer ")
 
 			claims := &Claims{}
 			_, err := jwt.ParseWithClaims(tokenStr, claims, func(t *jwt.Token) (interface{}, error) {

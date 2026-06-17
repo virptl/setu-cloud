@@ -8,8 +8,17 @@ import (
 )
 
 // Connect opens a pgx connection pool and verifies connectivity.
+// MaxConns is capped at 30 — leaves headroom for the MQTT worker pool
+// and prevents Postgres from being overwhelmed under burst load.
 func Connect(ctx context.Context, url string) (*pgxpool.Pool, error) {
-	pool, err := pgxpool.New(ctx, url)
+	config, err := pgxpool.ParseConfig(url)
+	if err != nil {
+		return nil, fmt.Errorf("pgxpool.ParseConfig: %w", err)
+	}
+	config.MaxConns = 30
+	config.MinConns = 5
+
+	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {
 		return nil, fmt.Errorf("pgxpool.New: %w", err)
 	}

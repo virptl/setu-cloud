@@ -25,6 +25,17 @@ type Config struct {
 
 	FactoryProvToken string
 	CloudPubkeyHex   string
+	CloudPrivKeyHex  string // P-256 private scalar D, 64 hex chars (legacy — use KeyEncryptionKey + tenant_keys table)
+
+	// KeyEncryptionKey wraps per-tenant private keys stored in tenant_keys.
+	// Must be exactly 64 hex chars (32 bytes / AES-256).
+	// Generate with: openssl rand -hex 32
+	KeyEncryptionKey string
+
+	// Consumer module
+	ConsumerTID   string
+	OTPDevMode    bool
+	OTPTTLMinutes int
 }
 
 func Load() (*Config, error) {
@@ -41,6 +52,11 @@ func Load() (*Config, error) {
 		DeviceMQTTBrokerURI: env("DEVICE_MQTT_BROKER_URI", ""),
 		FactoryProvToken:    env("FACTORY_PROV_TOKEN", ""),
 		CloudPubkeyHex:      env("CLOUD_PUBKEY_HEX", ""),
+		CloudPrivKeyHex:     env("CLOUD_PRIVKEY_HEX", ""),
+		KeyEncryptionKey:    env("KEY_ENCRYPTION_KEY", ""),
+		ConsumerTID:         env("CONSUMER_TID", "setu"),
+		OTPDevMode:          env("OTP_DEV_MODE", "true") == "true",
+		OTPTTLMinutes:       10,
 	}
 
 	if c.DeviceMQTTBrokerURI == "" {

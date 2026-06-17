@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/setucore/setu-cloud/internal/config"
+	"github.com/setucore/setu-cloud/internal/keystore"
 )
 
 var macRegex = regexp.MustCompile(`^[0-9a-f]{12}$`)
@@ -31,9 +32,8 @@ type provisionResp struct {
 }
 
 // HandleProvision serves POST /factory/provision.
-func HandleProvision(db *pgxpool.Pool, cfg *config.Config) http.HandlerFunc {
+func HandleProvision(db *pgxpool.Pool, cfg *config.Config, ks *keystore.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Validate shared token if configured.
 		if cfg.FactoryProvToken != "" {
 			if r.Header.Get("X-Factory-Token") != cfg.FactoryProvToken {
 				http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
@@ -47,7 +47,6 @@ func HandleProvision(db *pgxpool.Pool, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		// Normalise MAC: strip colons/dashes, lowercase.
 		req.MAC = strings.ToLower(strings.NewReplacer(":", "", "-", "").Replace(req.MAC))
 		if !macRegex.MatchString(req.MAC) {
 			http.Error(w, `{"error":"bad_request","msg":"invalid mac"}`, http.StatusBadRequest)
@@ -68,6 +67,14 @@ func HandleProvision(db *pgxpool.Pool, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
+		// Look up the active cloud public key for this device's tenant.
+		// Falls back to the legacy global env var if keystore has no entry yet.
+		cloudPubkey, err := ks.ActivePubKey(r.Context(), entry.TID)
+		if err != nil {
+			log.Printf("ztp: keystore ActivePubKey tid=%s: %v — falling back to cfg", entry.TID, err)
+			cloudPubkey = cfg.CloudPubkeyHex
+		}
+
 		resp := provisionResp{
 			DID:         entry.DID,
 			TID:         entry.TID,
@@ -75,7 +82,7 @@ func HandleProvision(db *pgxpool.Pool, cfg *config.Config) http.HandlerFunc {
 			MQUser:      entry.MQUser,
 			MQPass:      entry.MQPass,
 			MQURI:       cfg.DeviceMQTTBrokerURI,
-			CloudPubkey: cfg.CloudPubkeyHex,
+			CloudPubkey: cloudPubkey,
 			HWConfig:    entry.HWConfig,
 		}
 

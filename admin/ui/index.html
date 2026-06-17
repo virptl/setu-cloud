@@ -1,0 +1,1050 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Setu Admin — Device Inventory</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <style>
+    :root { --setu-accent: #ff6b35; }
+    body { background: #f0f2f5; }
+    .navbar { background: #1a1a2e !important; }
+    .navbar-brand { font-weight: 700; letter-spacing: -0.3px; color: #fff; }
+    .navbar-brand span { color: var(--setu-accent); }
+    .nav-tabs .nav-link { color: #555; border: none; padding: .6rem 1.25rem; }
+    .nav-tabs .nav-link.active { color: #1a1a2e; font-weight: 600;
+      border-bottom: 3px solid var(--setu-accent); background: transparent; }
+    .tab-pane { padding-top: 0; }
+    .card { border: none; box-shadow: 0 1px 4px rgba(0,0,0,.08); border-radius: .5rem; }
+    .card.rounded-top-0 { border-top-left-radius: 0; border-top-right-radius: 0; }
+    .mono { font-family: 'SF Mono', 'Consolas', monospace; font-size: .8rem; }
+    .copy-btn { cursor: pointer; border: none; background: none; padding: 0 3px;
+                color: #adb5bd; line-height: 1; vertical-align: middle; }
+    .copy-btn:hover { color: #0d6efd; }
+    .secret { filter: blur(4px); transition: filter .15s; cursor: pointer; }
+    .secret:hover { filter: none; }
+    .badge-prov  { background: #198754; }
+    .badge-pend  { background: #fd7e14; }
+    .drop-zone { border: 2px dashed #dee2e6; border-radius: .5rem;
+                 padding: 3rem 2rem; text-align: center; cursor: pointer; transition: all .2s; }
+    .drop-zone:hover, .drop-zone.over { border-color: var(--setu-accent); background: #fff8f5; }
+    .result-ok    { color: #198754; }
+    .result-error { color: #dc3545; }
+    .result-skip  { color: #6c757d; }
+  </style>
+</head>
+<body>
+
+<!-- Navbar -->
+<nav class="navbar navbar-dark mb-0 px-4 py-2">
+  <span class="navbar-brand"><span>setu</span> admin</span>
+  <span class="text-secondary small me-auto ms-3" id="status-bar">Loading…</span>
+  <span class="text-secondary small me-3">
+    <i class="bi bi-person-circle me-1"></i><span id="nav-username"></span>
+  </span>
+  <form method="POST" action="/logout" class="mb-0">
+    <button type="submit" class="btn btn-sm btn-outline-secondary text-white border-secondary">
+      <i class="bi bi-box-arrow-right me-1"></i>Sign out
+    </button>
+  </form>
+</nav>
+
+<div class="container-fluid px-4 py-3">
+
+  <!-- Tab headers -->
+  <ul class="nav nav-tabs border-bottom mb-0" id="mainTab">
+    <li class="nav-item">
+      <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-inventory" type="button">
+        <i class="bi bi-cpu me-1"></i>Inventory
+      </button>
+    </li>
+    <li class="nav-item">
+      <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-add" type="button">
+        <i class="bi bi-plus-circle me-1"></i>Add Device
+      </button>
+    </li>
+    <li class="nav-item">
+      <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-import" type="button">
+        <i class="bi bi-file-earmark-arrow-up me-1"></i>Bulk Import
+      </button>
+    </li>
+    <li class="nav-item">
+      <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-keys" type="button"
+              onclick="loadTenantKeys()">
+        <i class="bi bi-key me-1"></i>Tenant Keys
+      </button>
+    </li>
+    <li class="nav-item ms-auto">
+      <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-users" type="button"
+              onclick="loadAdminUsers()">
+        <i class="bi bi-people me-1"></i>Admin Users
+      </button>
+    </li>
+  </ul>
+
+  <div class="tab-content">
+
+    <!-- ── Inventory tab ──────────────────────────────────────────────────── -->
+    <div class="tab-pane fade show active" id="tab-inventory">
+      <div class="card rounded-top-0">
+        <!-- Toolbar -->
+        <div class="card-header bg-white d-flex align-items-center gap-2 py-2 flex-wrap">
+          <input class="form-control form-control-sm" style="max-width:240px"
+                 id="search" placeholder="Filter MAC / DID / PID…" oninput="filterTable()">
+          <select class="form-select form-select-sm w-auto" id="filter-status" onchange="filterTable()">
+            <option value="">All status</option>
+            <option value="pending">Pending</option>
+            <option value="provisioned">Provisioned</option>
+          </select>
+          <button class="btn btn-sm btn-outline-secondary ms-auto" onclick="loadDevices()" title="Refresh">
+            <i class="bi bi-arrow-clockwise"></i>
+          </button>
+        </div>
+        <!-- Table -->
+        <div class="table-responsive">
+          <table class="table table-sm table-hover mb-0 align-middle" id="device-table">
+            <thead class="table-light">
+              <tr>
+                <th>MAC</th>
+                <th>TID / PID</th>
+                <th>Device ID</th>
+                <th>MQTT User</th>
+                <th>MQTT Pass</th>
+                <th>HW Config</th>
+                <th>Registered</th>
+                <th>Status</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="device-tbody">
+              <tr><td colspan="9" class="text-center text-muted py-5">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Add Device tab ─────────────────────────────────────────────────── -->
+    <div class="tab-pane fade" id="tab-add">
+      <div class="row justify-content-center pt-2">
+        <div class="col-xl-5 col-lg-7">
+          <div class="card">
+            <div class="card-header bg-white fw-semibold py-3">
+              <i class="bi bi-plus-circle me-2 text-primary"></i>Add Device to Inventory
+            </div>
+            <div class="card-body p-4">
+              <form id="add-form" novalidate>
+
+                <!-- MAC -->
+                <div class="mb-3">
+                  <label class="form-label fw-semibold small">MAC Address <span class="text-danger">*</span></label>
+                  <input type="text" class="form-control mono" id="add-mac"
+                         placeholder="AA:BB:CC:DD:EE:FF" required autocomplete="off">
+                  <div class="form-text">Colons and dashes are stripped automatically.</div>
+                </div>
+
+                <!-- TID -->
+                <div class="mb-3">
+                  <label class="form-label fw-semibold small">Tenant ID (TID)</label>
+                  <input type="text" class="form-control mono" id="add-tid" value="setu" required>
+                </div>
+
+                <!-- PID -->
+                <div class="mb-3">
+                  <label class="form-label fw-semibold small">Product ID (PID) <span class="text-danger">*</span></label>
+                  <select class="form-select form-select-sm mb-2" id="pid-preset" onchange="applyPIDPreset()">
+                    <option value="">— choose product type —</option>
+                    <option value="sp1">sp1 · Smart Plug</option>
+                    <option value="light1">light1 · Light / Dimmer</option>
+                    <option value="th1">th1 · Thermostat / Climate</option>
+                    <option value="gen1">gen1 · Generic</option>
+                    <option value="_custom">Custom…</option>
+                  </select>
+                  <input type="text" class="form-control mono" id="add-pid" placeholder="e.g. sp1" required>
+                </div>
+
+                <!-- HW Config -->
+                <div class="mb-4">
+                  <label class="form-label fw-semibold small">HW Config (JSON)</label>
+                  <select class="form-select form-select-sm mb-2" id="hw-preset" onchange="applyHWPreset()">
+                    <option value="empty">Empty — {}</option>
+                    <option value="plug">Smart Plug — relay + button</option>
+                    <option value="dimmer">Dimmer — relay + PWM</option>
+                    <option value="rgb">RGB Light — relay + PWM + RGB</option>
+                    <option value="climate">Climate — relay + sensor</option>
+                  </select>
+                  <textarea class="form-control mono" id="add-hw" rows="9"
+                            style="font-size:.78rem">{}</textarea>
+                  <div class="form-text">GPIO/DP mapping written to device NVS during hw_prov.</div>
+                </div>
+
+                <button type="submit" class="btn btn-primary w-100 py-2">
+                  <i class="bi bi-plus-circle me-1"></i>Add to Inventory
+                </button>
+              </form>
+
+              <!-- Result -->
+              <div id="add-result" class="mt-3 d-none"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Bulk Import tab ────────────────────────────────────────────────── -->
+    <div class="tab-pane fade" id="tab-import">
+      <div class="row g-3 pt-2">
+
+        <!-- Left: format guide -->
+        <div class="col-lg-3">
+          <div class="card h-100">
+            <div class="card-header bg-white fw-semibold py-3">CSV Format</div>
+            <div class="card-body">
+              <table class="table table-sm table-bordered small mb-3">
+                <thead class="table-light">
+                  <tr><th>Column</th><th>Req.</th><th>Notes</th></tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td class="mono">mac</td>
+                    <td><i class="bi bi-check-circle-fill text-success"></i></td>
+                    <td>12 hex chars</td>
+                  </tr>
+                  <tr>
+                    <td class="mono">pid</td>
+                    <td><i class="bi bi-check-circle-fill text-success"></i></td>
+                    <td>e.g. sp1</td>
+                  </tr>
+                  <tr>
+                    <td class="mono">hw_config</td>
+                    <td><i class="bi bi-dash text-muted"></i></td>
+                    <td>JSON, default {}</td>
+                  </tr>
+                  <tr>
+                    <td class="mono">tid</td>
+                    <td><i class="bi bi-dash text-muted"></i></td>
+                    <td>default: server TID</td>
+                  </tr>
+                </tbody>
+              </table>
+              <p class="small fw-semibold text-muted mb-1">Example</p>
+              <pre class="bg-light p-2 rounded small mb-3" style="font-size:.73rem">mac,pid,hw_config
+aabbccddeeff,sp1,{}
+112233445566,light1,{}
+aabbccddee03,th1,{}</pre>
+              <button class="btn btn-sm btn-outline-secondary w-100" onclick="downloadTemplate()">
+                <i class="bi bi-download me-1"></i>Download Template
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right: upload + results -->
+        <div class="col-lg-9">
+          <div class="card mb-3">
+            <div class="card-header bg-white fw-semibold py-3">Upload CSV</div>
+            <div class="card-body">
+              <div class="drop-zone" id="drop-zone"
+                   onclick="document.getElementById('csv-file').click()"
+                   ondragover="event.preventDefault();this.classList.add('over')"
+                   ondragleave="this.classList.remove('over')"
+                   ondrop="handleDrop(event)">
+                <i class="bi bi-file-earmark-arrow-up fs-1 text-muted d-block mb-2"></i>
+                <strong>Click to browse</strong> or drag &amp; drop a CSV file here
+                <div class="text-muted small mt-1">UTF-8, max 10 MB</div>
+              </div>
+              <input type="file" id="csv-file" accept=".csv,text/csv"
+                     class="d-none" onchange="previewCSV(this.files[0])">
+
+              <!-- Preview -->
+              <div id="csv-preview" class="mt-3 d-none">
+                <div class="d-flex align-items-center mb-2 gap-2">
+                  <span class="fw-semibold small" id="preview-label"></span>
+                  <button class="btn btn-sm btn-primary ms-auto px-3" id="import-btn" onclick="submitCSV()">
+                    <i class="bi bi-upload me-1"></i>Import All
+                  </button>
+                  <button class="btn btn-sm btn-outline-secondary" onclick="clearCSV()">Clear</button>
+                </div>
+                <div class="table-responsive border rounded" style="max-height:260px;overflow-y:auto;">
+                  <table class="table table-sm table-bordered mb-0 small">
+                    <thead class="table-light sticky-top">
+                      <tr id="preview-head"></tr>
+                    </thead>
+                    <tbody id="preview-body"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Import results -->
+          <div class="card d-none" id="results-card">
+            <div class="card-header bg-white fw-semibold py-3 d-flex align-items-center">
+              Import Results
+              <span class="ms-2 small text-muted" id="results-summary"></span>
+            </div>
+            <div class="table-responsive" style="max-height:380px;overflow-y:auto;">
+              <table class="table table-sm mb-0 align-middle">
+                <thead class="table-light sticky-top">
+                  <tr>
+                    <th>MAC</th><th>Status</th><th>Device ID</th>
+                    <th>MQTT User</th><th>MQTT Pass</th><th>EMQX</th><th>Error</th>
+                  </tr>
+                </thead>
+                <tbody id="results-body"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ── Tenant Keys tab ───────────────────────────────────────────────── -->
+    <div class="tab-pane fade" id="tab-keys">
+      <div class="card pt-2 border-0">
+        <div class="card-header bg-white fw-semibold py-3 d-flex align-items-center border rounded-top">
+          <i class="bi bi-key me-2 text-warning"></i>Per-Tenant Signing Keys
+          <button class="btn btn-sm btn-outline-secondary ms-auto" onclick="loadTenantKeys()">
+            <i class="bi bi-arrow-clockwise"></i>
+          </button>
+        </div>
+        <div class="alert alert-warning small m-3 mb-0 py-2">
+          <i class="bi bi-exclamation-triangle-fill me-1"></i>
+          <strong>After generating a new key</strong>, you must push the new public key to each device in the field
+          via the BLE <code>cloud_key_rotate</code> command. Devices using the old key will fail BLE auth until updated.
+        </div>
+        <div class="table-responsive">
+          <table class="table table-sm table-hover mb-0 align-middle">
+            <thead class="table-light">
+              <tr>
+                <th>Tenant (TID)</th>
+                <th>Key ID</th>
+                <th>Public Key (X‖Y)</th>
+                <th>Created</th>
+                <th>Status</th>
+                <th>Rotated At</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="keys-tbody">
+              <tr><td colspan="7" class="text-center text-muted py-5">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Admin Users tab ───────────────────────────────────────────────── -->
+    <div class="tab-pane fade" id="tab-users">
+      <div class="row g-3 pt-2">
+
+        <!-- Add user form -->
+        <div class="col-lg-4">
+          <div class="card">
+            <div class="card-header bg-white fw-semibold py-3">
+              <i class="bi bi-person-plus me-2 text-primary"></i>Add Admin User
+            </div>
+            <div class="card-body">
+              <form id="user-form" novalidate>
+                <div class="mb-3">
+                  <label class="form-label small fw-semibold">Username <span class="text-danger">*</span></label>
+                  <input type="text" class="form-control" id="u-username"
+                         placeholder="e.g. alice" required autocomplete="off">
+                </div>
+                <div class="mb-3">
+                  <label class="form-label small fw-semibold">Password <span class="text-danger">*</span></label>
+                  <input type="password" class="form-control" id="u-password"
+                         placeholder="Min 8 characters" required autocomplete="new-password">
+                </div>
+                <div class="mb-4">
+                  <label class="form-label small fw-semibold">Confirm Password <span class="text-danger">*</span></label>
+                  <input type="password" class="form-control" id="u-confirm"
+                         placeholder="Repeat password" required autocomplete="new-password">
+                </div>
+                <button type="submit" class="btn btn-primary w-100">
+                  <i class="bi bi-person-plus me-1"></i>Create User
+                </button>
+              </form>
+              <div id="user-result" class="mt-3 d-none"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- User list -->
+        <div class="col-lg-8">
+          <div class="card">
+            <div class="card-header bg-white fw-semibold py-3 d-flex align-items-center">
+              Admin Users
+              <button class="btn btn-sm btn-outline-secondary ms-auto" onclick="loadAdminUsers()">
+                <i class="bi bi-arrow-clockwise"></i>
+              </button>
+            </div>
+            <div class="table-responsive">
+              <table class="table table-sm table-hover mb-0 align-middle">
+                <thead class="table-light">
+                  <tr>
+                    <th>Username</th>
+                    <th>Created</th>
+                    <th>Last Login</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="users-tbody">
+                  <tr><td colspan="4" class="text-center text-muted py-4">Loading…</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+  </div><!-- /tab-content -->
+</div><!-- /container -->
+
+<!-- Delete confirm modal -->
+<div class="modal fade" id="del-modal" tabindex="-1">
+  <div class="modal-dialog modal-sm modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header border-0 pb-0">
+        <h6 class="modal-title">Remove device?</h6>
+        <button class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body small py-2">
+        Remove <code id="del-mac-label"></code> from inventory?<br>
+        This cannot be undone.
+      </div>
+      <div class="modal-footer border-0 pt-0">
+        <button class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-sm btn-danger" id="del-confirm">Delete</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- HW Config view modal -->
+<div class="modal fade" id="hw-modal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h6 class="modal-title">HW Config — <span id="hw-modal-mac" class="mono"></span></h6>
+        <button class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body p-0">
+        <pre class="m-0 p-3 bg-light rounded-bottom small"
+             id="hw-modal-body" style="max-height:420px;overflow-y:auto;font-size:.78rem;"></pre>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="position-fixed bottom-0 end-0 p-3" style="z-index:9999">
+  <div id="toast" class="toast align-items-center border-0" role="alert" aria-live="assertive">
+    <div class="d-flex">
+      <div class="toast-body fw-semibold" id="toast-body"></div>
+      <button class="btn-close me-2 m-auto btn-close-white" data-bs-dismiss="toast"></button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+'use strict';
+
+// ── Bootstrap instances ──────────────────────────────────────────────────────
+const toastEl   = document.getElementById('toast');
+const bsToast   = new bootstrap.Toast(toastEl, { delay: 3500 });
+const bsDelModal = new bootstrap.Modal(document.getElementById('del-modal'));
+const bsHwModal  = new bootstrap.Modal(document.getElementById('hw-modal'));
+
+// ── Global state ─────────────────────────────────────────────────────────────
+let allDevices = [];
+let csvFile    = null;
+let delTarget  = null;
+
+// ── HW config JSON presets ────────────────────────────────────────────────────
+const HW_PRESETS = {
+  empty: '{}',
+  plug: fmt({config:{dps:{
+    "1":{type:"relay", gpio:12, active_high:true, initial_state:false},
+    "2":{type:"button",gpio:0,  pullup:true,      bind_dps:1}
+  }}}),
+  dimmer: fmt({config:{dps:{
+    "1":{type:"relay",gpio:12,active_high:true,initial_state:false},
+    "2":{type:"pwm",  gpio:13,freq_hz:5000,resolution:8,initial_brightness:0}
+  }}}),
+  rgb: fmt({config:{dps:{
+    "1":{type:"relay",gpio:12,active_high:true,initial_state:false},
+    "2":{type:"pwm",  gpio:13,freq_hz:5000,resolution:8,initial_brightness:0},
+    "3":{type:"rgb",  gpio_r:14,gpio_g:15,gpio_b:16,freq_hz:5000,resolution:8}
+  }}}),
+  climate: fmt({config:{dps:{
+    "1":{type:"relay", gpio:12,active_high:true,initial_state:false},
+    "2":{type:"sensor",pin:4, sensor_type:"dht22"}
+  }}}),
+};
+
+const PID_HW_MAP = { sp1:'plug', light1:'dimmer', th1:'climate', gen1:'empty' };
+
+function fmt(obj) { return JSON.stringify(obj, null, 2); }
+
+// ── Toast helper ─────────────────────────────────────────────────────────────
+function toast(msg, type = 'success') {
+  toastEl.className = `toast align-items-center border-0 text-bg-${type}`;
+  document.getElementById('toast-body').textContent = msg;
+  bsToast.show();
+}
+
+// ── Fetch wrapper ─────────────────────────────────────────────────────────────
+async function api(method, path, body) {
+  const opts = { method, headers: {} };
+  if (body instanceof FormData) {
+    opts.body = body;
+  } else if (body) {
+    opts.headers['Content-Type'] = 'application/json';
+    opts.body = JSON.stringify(body);
+  }
+  const res = await fetch(path, opts);
+  const data = res.headers.get('content-type')?.includes('json') ? await res.json() : null;
+  if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+  return data;
+}
+
+// ── Copy to clipboard ─────────────────────────────────────────────────────────
+async function cp(text) {
+  try { await navigator.clipboard.writeText(text); toast('Copied', 'secondary'); }
+  catch { toast('Copy failed', 'danger'); }
+}
+
+function cpBtn(text, title = 'Copy') {
+  const t = text.replace(/'/g, '&#39;');
+  return `<button class="copy-btn" title="${title}" onclick="cp('${t}')"><i class="bi bi-copy"></i></button>`;
+}
+
+// ── Device list ───────────────────────────────────────────────────────────────
+async function loadDevices() {
+  document.getElementById('status-bar').textContent = 'Loading…';
+  try {
+    allDevices = await api('GET', '/api/devices');
+    renderTable(allDevices);
+    const prov = allDevices.filter(d => d.provisioned_at).length;
+    document.getElementById('status-bar').textContent =
+      `${allDevices.length} device${allDevices.length !== 1 ? 's' : ''} · ${prov} provisioned · ${allDevices.length - prov} pending`;
+  } catch (e) {
+    document.getElementById('device-tbody').innerHTML =
+      `<tr><td colspan="9" class="text-center text-danger py-5">${e.message}</td></tr>`;
+    document.getElementById('status-bar').textContent = 'Error loading devices';
+  }
+}
+
+function filterTable() {
+  const q  = document.getElementById('search').value.toLowerCase();
+  const st = document.getElementById('filter-status').value;
+  renderTable(allDevices.filter(d => {
+    const matchQ  = !q  || [d.mac, d.did, d.pid, d.tid, d.mq_user].some(v => v.toLowerCase().includes(q));
+    const matchSt = !st || (st === 'provisioned' ? !!d.provisioned_at : !d.provisioned_at);
+    return matchQ && matchSt;
+  }));
+}
+
+function renderTable(devices) {
+  const tbody = document.getElementById('device-tbody');
+  if (!devices.length) {
+    tbody.innerHTML = `<tr><td colspan="9" class="text-center text-muted py-5">No devices found</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = devices.map(d => {
+    const prov    = !!d.provisioned_at;
+    const badge   = prov
+      ? `<span class="badge badge-prov">Provisioned</span>`
+      : `<span class="badge badge-pend">Pending</span>`;
+    const regDate = new Date(d.registered_at).toLocaleDateString('en-GB',
+      { day:'2-digit', month:'short', year:'numeric' });
+    const didShort = d.did.slice(0, 8) + '…';
+    const hw = hwBadge(d);
+    const statusBtn = prov
+      ? `<button class="btn btn-sm btn-outline-warning" title="Reset to Pending (re-provision)"
+                 onclick="confirmStatusChange('${d.mac}', false)">
+           <i class="bi bi-arrow-counterclockwise"></i>
+         </button>`
+      : `<button class="btn btn-sm btn-outline-success" title="Mark as Provisioned"
+                 onclick="confirmStatusChange('${d.mac}', true)">
+           <i class="bi bi-check2-circle"></i>
+         </button>`;
+    const delBtn = prov
+      ? `<button class="btn btn-sm btn-outline-secondary" disabled title="Cannot delete a provisioned device">
+           <i class="bi bi-trash"></i></button>`
+      : `<button class="btn btn-sm btn-outline-danger" onclick="confirmDel('${d.mac}')">
+           <i class="bi bi-trash"></i></button>`;
+    return `<tr>
+      <td class="mono">${d.mac} ${cpBtn(d.mac, 'Copy MAC')}</td>
+      <td>
+        <span class="badge bg-secondary me-1">${d.tid}</span>
+        <span class="badge bg-primary">${d.pid}</span>
+      </td>
+      <td class="mono text-muted">${didShort} ${cpBtn(d.did, 'Copy full DID')}</td>
+      <td class="mono small">${d.mq_user} ${cpBtn(d.mq_user)}</td>
+      <td class="mono small">
+        <span class="secret" title="Click to reveal">${d.mq_pass}</span>
+        ${cpBtn(d.mq_pass, 'Copy password')}
+      </td>
+      <td>${hw}</td>
+      <td class="text-muted small">${regDate}</td>
+      <td>${badge}</td>
+      <td class="d-flex gap-1">${statusBtn}${delBtn}</td>
+    </tr>`;
+  }).join('');
+}
+
+function hwBadge(d) {
+  try {
+    const hw = typeof d.hw_config === 'string' ? JSON.parse(d.hw_config) : d.hw_config;
+    const dps = hw?.config?.dps || hw?.dps || {};
+    const count = Object.keys(dps).length;
+    if (count === 0) return `<span class="text-muted small">—</span>`;
+    const types = [...new Set(Object.values(dps).map(dp => dp.type))].join(', ');
+    return `<button class="badge bg-light text-dark border fw-normal small py-1 px-2"
+                    style="cursor:pointer;font-size:.72rem"
+                    onclick="showHW('${d.mac}')" title="View full config">
+              ${count} DP · ${types}
+            </button>`;
+  } catch { return `<span class="text-muted small">—</span>`; }
+}
+
+function showHW(mac) {
+  const d = allDevices.find(x => x.mac === mac);
+  if (!d) return;
+  document.getElementById('hw-modal-mac').textContent = mac;
+  document.getElementById('hw-modal-body').textContent =
+    JSON.stringify(typeof d.hw_config === 'string' ? JSON.parse(d.hw_config) : d.hw_config, null, 2);
+  bsHwModal.show();
+}
+
+// ── Delete ────────────────────────────────────────────────────────────────────
+function confirmDel(mac) {
+  delTarget = mac;
+  document.getElementById('del-mac-label').textContent = mac;
+  bsDelModal.show();
+}
+
+// ── Add Device form ───────────────────────────────────────────────────────────
+function applyHWPreset() {
+  const v = document.getElementById('hw-preset').value;
+  document.getElementById('add-hw').value = HW_PRESETS[v] ?? '{}';
+}
+
+function applyPIDPreset() {
+  const v = document.getElementById('pid-preset').value;
+  if (!v || v === '_custom') return;
+  document.getElementById('add-pid').value = v;
+  const hwKey = PID_HW_MAP[v];
+  if (hwKey) {
+    document.getElementById('hw-preset').value = hwKey;
+    applyHWPreset();
+  }
+}
+
+document.getElementById('add-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const mac = document.getElementById('add-mac').value;
+  const tid = document.getElementById('add-tid').value;
+  const pid = document.getElementById('add-pid').value;
+  const hwRaw = document.getElementById('add-hw').value.trim() || '{}';
+
+  let hw;
+  try { hw = JSON.parse(hwRaw); } catch {
+    toast('HW Config is not valid JSON', 'danger'); return;
+  }
+
+  const resultEl = document.getElementById('add-result');
+  resultEl.className = 'mt-3 d-none';
+  const btn = e.target.querySelector('button[type=submit]');
+  btn.disabled = true;
+
+  try {
+    const res = await api('POST', '/api/devices', { mac, tid, pid, hw_config: hw });
+    resultEl.className = 'mt-3';
+    resultEl.innerHTML = `
+      <div class="alert alert-success mb-0">
+        <div class="fw-semibold mb-2"><i class="bi bi-check-circle-fill me-1"></i>Device added successfully</div>
+        <table class="table table-sm table-bordered mb-0 small bg-white">
+          <tr><th width="90">DID</th>
+              <td class="mono">${res.did}</td>
+              <td width="30">${cpBtn(res.did)}</td></tr>
+          <tr><th>MQ User</th>
+              <td class="mono">${res.mq_user}</td>
+              <td>${cpBtn(res.mq_user)}</td></tr>
+          <tr><th>MQ Pass</th>
+              <td class="mono">${res.mq_pass}</td>
+              <td>${cpBtn(res.mq_pass)}</td></tr>
+          <tr><th>EMQX</th>
+              <td colspan="2" class="small text-muted">${res.emqx_status}</td></tr>
+        </table>
+      </div>`;
+    e.target.reset();
+    document.getElementById('add-hw').value = '{}';
+    loadDevices();
+    toast('Device added to inventory');
+  } catch (err) {
+    resultEl.className = 'mt-3';
+    resultEl.innerHTML = `<div class="alert alert-danger mb-0">
+      <i class="bi bi-x-circle-fill me-1"></i>${err.message}</div>`;
+    toast(err.message, 'danger');
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// ── CSV Import ────────────────────────────────────────────────────────────────
+function handleDrop(e) {
+  e.preventDefault();
+  document.getElementById('drop-zone').classList.remove('over');
+  const f = e.dataTransfer.files[0];
+  if (f) previewCSV(f);
+}
+
+function previewCSV(file) {
+  if (!file) return;
+  csvFile = file;
+  const reader = new FileReader();
+  reader.onload = e => {
+    const lines = e.target.result.split('\n').filter(l => l.trim());
+    if (lines.length < 2) { toast('CSV needs a header and at least one row', 'warning'); return; }
+
+    const header = lines[0].split(',').map(h => h.trim());
+    const rows   = lines.slice(1).map(l => l.split(',').map(c => c.trim()));
+
+    document.getElementById('preview-head').innerHTML =
+      header.map(h => `<th class="mono">${h}</th>`).join('') + '<th class="text-muted">#</th>';
+    document.getElementById('preview-body').innerHTML =
+      rows.map((r, i) =>
+        `<tr>${r.map(c => `<td class="mono small">${c}</td>`).join('')}
+             <td class="text-muted small">${i + 1}</td></tr>`
+      ).join('');
+
+    document.getElementById('preview-label').textContent =
+      `${rows.length} row${rows.length !== 1 ? 's' : ''} ready to import`;
+    document.getElementById('csv-preview').classList.remove('d-none');
+  };
+  reader.readAsText(file);
+}
+
+function clearCSV() {
+  csvFile = null;
+  document.getElementById('csv-file').value = '';
+  document.getElementById('csv-preview').classList.add('d-none');
+  document.getElementById('results-card').classList.add('d-none');
+}
+
+async function submitCSV() {
+  if (!csvFile) return;
+  const btn = document.getElementById('import-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Importing…';
+
+  try {
+    const fd = new FormData();
+    fd.append('file', csvFile);
+    const res = await api('POST', '/api/devices/import', fd);
+    renderResults(res.results);
+    const ok = res.results.filter(r => r.status === 'ok').length;
+    toast(`${ok} of ${res.results.length} device${res.results.length !== 1 ? 's' : ''} imported`);
+    loadDevices();
+  } catch (e) {
+    toast(e.message, 'danger');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-upload me-1"></i>Import All';
+  }
+}
+
+function renderResults(results) {
+  const card = document.getElementById('results-card');
+  const ok   = results.filter(r => r.status === 'ok').length;
+  const err  = results.filter(r => r.status === 'error').length;
+  document.getElementById('results-summary').textContent =
+    `${ok} ok · ${err} error${err !== 1 ? 's' : ''}`;
+  document.getElementById('results-body').innerHTML = results.map(r => {
+    const cls  = r.status === 'ok' ? 'result-ok' : 'result-error';
+    const icon = r.status === 'ok' ? 'bi-check-circle-fill' : 'bi-x-circle-fill';
+    const didCell = r.did
+      ? `<span class="mono">${r.did.slice(0,8)}…</span> ${cpBtn(r.did, 'Copy DID')}`
+      : '—';
+    const passCell = r.mq_pass
+      ? `<span class="secret mono" title="Click to reveal">${r.mq_pass}</span> ${cpBtn(r.mq_pass)}`
+      : '—';
+    return `<tr>
+      <td class="mono small">${r.mac}</td>
+      <td class="${cls} small"><i class="bi ${icon} me-1"></i>${r.status}</td>
+      <td class="small">${didCell}</td>
+      <td class="mono small">${r.mq_user || '—'}</td>
+      <td class="small">${passCell}</td>
+      <td class="small text-muted">${r.emqx_status || '—'}</td>
+      <td class="small text-danger">${r.error || ''}</td>
+    </tr>`;
+  }).join('');
+  card.classList.remove('d-none');
+  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function downloadTemplate() {
+  const csv = 'mac,pid,hw_config\naabbccddeeff,sp1,{}\n112233445566,light1,{}';
+  const a = Object.assign(document.createElement('a'), {
+    href: URL.createObjectURL(new Blob([csv], { type: 'text/csv' })),
+    download: 'setu_devices_template.csv',
+  });
+  a.click();
+}
+
+// ── Tenant Keys ───────────────────────────────────────────────────────────────
+async function loadTenantKeys() {
+  const tbody = document.getElementById('keys-tbody');
+  try {
+    const keys = await api('GET', '/api/tenant-keys');
+    if (!keys.length) {
+      tbody.innerHTML = `<tr><td colspan="7" class="text-center text-muted py-5">No keys found. Generate one per tenant below.</td></tr>`;
+      return;
+    }
+    // Group: active keys first, then history
+    tbody.innerHTML = keys.map(k => {
+      const created  = new Date(k.created_at).toLocaleString('en-GB',
+        { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' });
+      const rotated  = k.rotated_at
+        ? new Date(k.rotated_at).toLocaleString('en-GB',
+            { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' })
+        : '—';
+      const badge = k.active
+        ? `<span class="badge bg-success">Active</span>`
+        : `<span class="badge bg-secondary">Rotated</span>`;
+      const pubShort = k.pub_key_hex.slice(0, 16) + '…' + k.pub_key_hex.slice(-8);
+      const genBtn = k.active
+        ? `<button class="btn btn-sm btn-outline-warning" onclick="confirmGenKey('${k.tid}')"
+                   title="Generate new keypair for this tenant">
+             <i class="bi bi-arrow-repeat me-1"></i>Rotate
+           </button>`
+        : '';
+      return `<tr class="${k.active ? '' : 'table-secondary text-muted'}">
+        <td class="fw-semibold">${k.tid}</td>
+        <td class="mono small">${k.key_id.slice(0,8)}… ${cpBtn(k.key_id, 'Copy Key ID')}</td>
+        <td class="mono small">${pubShort} ${cpBtn(k.pub_key_hex, 'Copy full public key')}</td>
+        <td class="small">${created}</td>
+        <td>${badge}</td>
+        <td class="small">${rotated}</td>
+        <td>${genBtn}</td>
+      </tr>`;
+    }).join('');
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="7" class="text-center py-4">
+      ${e.message.includes('503')
+        ? '<span class="text-warning"><i class="bi bi-exclamation-triangle me-1"></i>KEY_ENCRYPTION_KEY not configured on the server.</span>'
+        : `<span class="text-danger">${e.message}</span>`}
+    </td></tr>`;
+  }
+}
+
+let genKeyTarget = null;
+
+function confirmGenKey(tid) {
+  genKeyTarget = tid;
+  document.getElementById('del-mac-label').textContent = `"${tid}"`;
+  document.querySelector('#del-modal .modal-title').textContent = 'Rotate tenant key?';
+  document.querySelector('#del-modal .modal-body').innerHTML =
+    `Generate a new P-256 keypair for tenant <code>${tid}</code>?<br>
+     <span class="text-warning small"><i class="bi bi-exclamation-triangle me-1"></i>
+     All devices must be updated via BLE <code>cloud_key_rotate</code> after this.</span>`;
+  bsDelModal.show();
+}
+
+// ── Admin Users ───────────────────────────────────────────────────────────────
+let currentUsername = '';
+
+async function loadAdminUsers() {
+  try {
+    const users = await api('GET', '/api/admin-users');
+    renderAdminUsers(users);
+  } catch (e) {
+    document.getElementById('users-tbody').innerHTML =
+      `<tr><td colspan="4" class="text-center text-danger py-4">${e.message}</td></tr>`;
+  }
+}
+
+function renderAdminUsers(users) {
+  const tbody = document.getElementById('users-tbody');
+  if (!users.length) {
+    tbody.innerHTML = `<tr><td colspan="4" class="text-center text-muted py-4">No admin users</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = users.map(u => {
+    const created   = new Date(u.created_at).toLocaleDateString('en-GB',
+      { day:'2-digit', month:'short', year:'numeric' });
+    const lastLogin = u.last_login_at
+      ? new Date(u.last_login_at).toLocaleString('en-GB',
+          { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' })
+      : '<span class="text-muted small">Never</span>';
+    const isSelf = u.username === currentUsername;
+    const delBtn = isSelf
+      ? `<button class="btn btn-sm btn-outline-secondary" disabled title="Cannot delete your own account">
+           <i class="bi bi-trash"></i></button>`
+      : `<button class="btn btn-sm btn-outline-danger" onclick="confirmDelUser('${u.username}')">
+           <i class="bi bi-trash"></i></button>`;
+    return `<tr>
+      <td class="fw-semibold">
+        ${u.username}
+        ${isSelf ? '<span class="badge bg-secondary ms-1" style="font-size:.65rem">you</span>' : ''}
+      </td>
+      <td class="text-muted small">${created}</td>
+      <td class="small">${lastLogin}</td>
+      <td>${delBtn}</td>
+    </tr>`;
+  }).join('');
+}
+
+document.getElementById('user-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const username = document.getElementById('u-username').value.trim();
+  const password = document.getElementById('u-password').value;
+  const confirm  = document.getElementById('u-confirm').value;
+  const resultEl = document.getElementById('user-result');
+
+  resultEl.className = 'mt-3 d-none';
+  if (password !== confirm) {
+    resultEl.className = 'mt-3';
+    resultEl.innerHTML = `<div class="alert alert-danger py-2 mb-0 small">Passwords do not match.</div>`;
+    return;
+  }
+  if (password.length < 8) {
+    resultEl.className = 'mt-3';
+    resultEl.innerHTML = `<div class="alert alert-danger py-2 mb-0 small">Password must be at least 8 characters.</div>`;
+    return;
+  }
+
+  const btn = e.target.querySelector('button[type=submit]');
+  btn.disabled = true;
+  try {
+    await api('POST', '/api/admin-users', { username, password });
+    e.target.reset();
+    resultEl.className = 'mt-3';
+    resultEl.innerHTML = `<div class="alert alert-success py-2 mb-0 small">
+      <i class="bi bi-check-circle-fill me-1"></i>User <strong>${username}</strong> created.</div>`;
+    toast(`Admin user "${username}" created`);
+    loadAdminUsers();
+  } catch (err) {
+    resultEl.className = 'mt-3';
+    resultEl.innerHTML = `<div class="alert alert-danger py-2 mb-0 small">${err.message}</div>`;
+    toast(err.message, 'danger');
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+let delUserTarget = null;
+
+function confirmDelUser(username) {
+  delUserTarget = username;
+  delTarget = null;
+  document.getElementById('del-mac-label').textContent = username;
+  document.querySelector('#del-modal .modal-title').textContent = 'Remove admin user?';
+  bsDelModal.show();
+}
+
+// Override del-confirm to handle both devices and users.
+document.getElementById('del-confirm').onclick = async () => {
+  if (statusChangeTarget !== null) {
+    try {
+      await api('PATCH', `/api/devices/${statusChangeTarget}/status`,
+        { provisioned: statusChangeValue });
+      bsDelModal.hide();
+      toast(`${statusChangeTarget} → ${statusChangeValue ? 'Provisioned' : 'Pending'}`);
+      loadDevices();
+    } catch (e) {
+      bsDelModal.hide();
+      toast(e.message, 'danger');
+    }
+    statusChangeTarget = null; statusChangeValue = null;
+    return;
+  }
+  if (genKeyTarget) {
+    try {
+      const res = await api('POST', `/api/tenant-keys/${genKeyTarget}/generate`);
+      bsDelModal.hide();
+      toast(`New key generated for tenant "${genKeyTarget}" — key_id: ${res.key_id.slice(0,8)}…`);
+      loadTenantKeys();
+    } catch (e) {
+      bsDelModal.hide();
+      toast(e.message, 'danger');
+    }
+    genKeyTarget = null;
+    return;
+  }
+  if (delUserTarget) {
+    try {
+      await api('DELETE', `/api/admin-users/${delUserTarget}`);
+      bsDelModal.hide();
+      toast(`User "${delUserTarget}" removed`);
+      loadAdminUsers();
+    } catch (e) {
+      bsDelModal.hide();
+      toast(e.message, 'danger');
+    }
+    delUserTarget = null;
+    return;
+  }
+  if (!delTarget) return;
+  try {
+    await api('DELETE', `/api/devices/${delTarget}`);
+    bsDelModal.hide();
+    toast(`${delTarget} removed`);
+    loadDevices();
+  } catch (e) {
+    bsDelModal.hide();
+    toast(e.message, 'danger');
+  }
+  delTarget = null;
+};
+
+// Reset modal title when it closes
+document.getElementById('del-modal').addEventListener('hidden.bs.modal', () => {
+  document.querySelector('#del-modal .modal-title').textContent = 'Remove device?';
+  document.querySelector('#del-modal .modal-body').innerHTML =
+    `Remove <code id="del-mac-label"></code> from inventory?<br>This cannot be undone.`;
+  delUserTarget = null;
+  genKeyTarget = null;
+  statusChangeTarget = null; statusChangeValue = null;
+});
+
+// ── Device status change ─────────────────────────────────────────────────────
+let statusChangeTarget = null;
+let statusChangeValue  = null;
+
+function confirmStatusChange(mac, provisioned) {
+  statusChangeTarget = mac;
+  statusChangeValue  = provisioned;
+  delTarget = null; delUserTarget = null; genKeyTarget = null;
+
+  document.querySelector('#del-modal .modal-title').textContent =
+    provisioned ? 'Mark as Provisioned?' : 'Reset to Pending?';
+  document.querySelector('#del-modal .modal-body').innerHTML = provisioned
+    ? `Manually mark <code>${mac}</code> as provisioned?<br>
+       <span class="text-muted small">This will also create a devices row so the device can connect via MQTT.</span>`
+    : `Reset <code>${mac}</code> back to <strong>Pending</strong>?<br>
+       <span class="text-warning small"><i class="bi bi-exclamation-triangle me-1"></i>
+       The device will need to re-run factory provisioning (ZTP) to reconnect.</span>`;
+  bsDelModal.show();
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+(async () => {
+  try {
+    const me = await api('GET', '/api/me');
+    currentUsername = me.username;
+    document.getElementById('nav-username').textContent = me.username;
+  } catch {}
+  loadDevices();
+})();
+</script>
+</body>
+</html>

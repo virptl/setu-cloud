@@ -8,9 +8,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/setucore/setu-cloud/internal/app"
 	"github.com/setucore/setu-cloud/internal/api/handlers"
 	"github.com/setucore/setu-cloud/internal/api/middleware"
 	"github.com/setucore/setu-cloud/internal/config"
+	"github.com/setucore/setu-cloud/internal/keystore"
 	"github.com/setucore/setu-cloud/internal/mqtt"
 	"github.com/setucore/setu-cloud/internal/registry"
 	"github.com/setucore/setu-cloud/internal/shadow"
@@ -24,6 +26,7 @@ func NewRouter(
 	pub *mqtt.Publisher,
 	hub *ws.Hub,
 	cfg *config.Config,
+	ks *keystore.Service,
 ) http.Handler {
 	r := chi.NewRouter()
 	r.Use(chimw.RealIP)
@@ -40,7 +43,7 @@ func NewRouter(
 	r.Post("/auth/token", handlers.Token(db, cfg.JWTSecret))
 
 	// ── Factory ZTP — no JWT, network-isolated ────────────────────────────────
-	r.Post("/factory/provision", ztp.HandleProvision(db, cfg))
+	r.Post("/factory/provision", ztp.HandleProvision(db, cfg, ks))
 
 	// ── Authenticated routes ──────────────────────────────────────────────────
 	r.Group(func(r chi.Router) {
@@ -50,9 +53,37 @@ func NewRouter(
 		r.Get("/devices/{did}", handlers.GetDevice(reg, shd))
 		r.Post("/devices/{did}/commands", handlers.IssueCommand(db, pub, shd))
 		r.Get("/devices/{did}/events", handlers.ListEvents(db))
+	})
 
-		// WebSocket — JWT via query param ?token= or Authorization header
+	// WebSocket — consumer JWT via ?token= or Authorization header
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.AuthUser(cfg.JWTSecret))
 		r.Get("/ws", ws.HandleWS(hub))
+	})
+
+	// ── Consumer app routes (/v1) ─────────────────────────────────────────────
+	r.Route("/v1", func(r chi.Router) {
+		// Public auth endpoints
+		r.Post("/auth/otp/request", app.RequestOTP(db, cfg))
+		r.Post("/auth/otp/verify", app.VerifyOTP(db, cfg))
+		r.Post("/auth/guest", app.Guest(db, cfg))
+		r.Post("/auth/logout", app.Logout())
+
+		// Authenticated (app user JWT)
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.AuthUser(cfg.JWTSecret))
+			r.Get("/devices", app.ListDevices(db))
+			r.Post("/devices/claim", app.ClaimDevice(db, cfg))
+			r.Post("/devices/adopt", app.AdoptDevice(db, cfg))
+			r.Post("/ble/sign", app.SignBLENonce(db, ks))
+			r.Post("/devices/{id}/command", app.Command(db, pub, cfg))
+			r.Delete("/devices/{id}", app.DeleteDevice(db))
+			r.Get("/rooms", app.Rooms())
+			r.Get("/scenes", app.Scenes())
+			r.Get("/automations", app.Automations())
+			r.Post("/scenes/{id}/run", app.RunScene())
+			r.Patch("/automations/{id}", app.PatchAutomation())
+		})
 	})
 
 	return r

@@ -9,10 +9,13 @@ import (
 	"syscall"
 	"time"
 
+	"encoding/hex"
+
 	"github.com/setucore/setu-cloud/internal/api"
 	"github.com/setucore/setu-cloud/internal/cache"
 	"github.com/setucore/setu-cloud/internal/config"
 	"github.com/setucore/setu-cloud/internal/db"
+	"github.com/setucore/setu-cloud/internal/keystore"
 	internalmqtt "github.com/setucore/setu-cloud/internal/mqtt"
 	"github.com/setucore/setu-cloud/internal/ws"
 )
@@ -42,6 +45,17 @@ func main() {
 	defer redisClient.Close()
 	log.Println("Redis connected")
 
+	// ── Keystore ──────────────────────────────────────────────────────────────
+	kek, err := hex.DecodeString(cfg.KeyEncryptionKey)
+	if err != nil || len(kek) != 32 {
+		log.Fatal("KEY_ENCRYPTION_KEY must be exactly 64 hex chars (32 bytes). Generate with: openssl rand -hex 32")
+	}
+	ks, err := keystore.New(pool, kek)
+	if err != nil {
+		log.Fatalf("keystore: %v", err)
+	}
+	log.Println("Keystore initialised")
+
 	// ── MQTT ──────────────────────────────────────────────────────────────────
 	mqttClient, err := internalmqtt.NewClient(
 		cfg.MQTTBrokerURL,
@@ -62,9 +76,35 @@ func main() {
 	hub := ws.NewHub(redisClient)
 	go hub.RunRedisSubscriber(ctx)
 
+	// ── device_events cleanup ─────────────────────────────────────────────────
+	// Runs once at startup (catches any backlog) then every 24 hours.
+	// Requires idx_device_events_ts (migration 0009).
+	go func() {
+		cleanup := func() {
+			ct, err := pool.Exec(ctx,
+				`DELETE FROM device_events WHERE ts < NOW() - INTERVAL '90 days'`)
+			if err != nil {
+				log.Printf("device_events cleanup: %v", err)
+			} else if ct.RowsAffected() > 0 {
+				log.Printf("device_events cleanup: removed %d rows", ct.RowsAffected())
+			}
+		}
+		cleanup()
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				cleanup()
+			}
+		}
+	}()
+
 	// ── HTTP server ───────────────────────────────────────────────────────────
 	pub := internalmqtt.NewPublisher(mqttClient)
-	handler := api.NewRouter(pool, redisClient, pub, hub, cfg)
+	handler := api.NewRouter(pool, redisClient, pub, hub, cfg, ks)
 
 	srv := &http.Server{
 		Addr:         cfg.ListenAddr,

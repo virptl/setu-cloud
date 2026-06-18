@@ -75,6 +75,14 @@ func RequestOTP(db *pgxpool.Pool, cfg *config.Config) http.HandlerFunc {
 		}
 		email := strings.ToLower(strings.TrimSpace(body.Email))
 
+		// Reject if email is already registered — user should log in instead.
+		var existingID string
+		if err := db.QueryRow(r.Context(),
+			`SELECT id FROM app_users WHERE email=$1`, email).Scan(&existingID); err == nil {
+			writeErr(w, 409, "already_registered", "email already registered, please log in")
+			return
+		}
+
 		// Rate limit: reject if an unconsumed code was created in the last 30s.
 		var recent int
 		db.QueryRow(r.Context(),

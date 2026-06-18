@@ -16,6 +16,7 @@ import (
 
 	"github.com/setucore/setu-cloud/internal/api/middleware"
 	"github.com/setucore/setu-cloud/internal/config"
+	emailsvc "github.com/setucore/setu-cloud/internal/email"
 )
 
 type userDTO struct {
@@ -75,6 +76,14 @@ func RequestOTP(db *pgxpool.Pool, cfg *config.Config) http.HandlerFunc {
 		if cfg.OTPDevMode {
 			log.Printf("[OTP] %s -> %s", email, code)
 			resp["dev_code"] = code
+		} else {
+			if err := emailsvc.SendOTP(
+				cfg.SMTPHost, cfg.SMTPPort,
+				cfg.SMTPUser, cfg.SMTPPassword,
+				cfg.SMTPFrom, email, code,
+			); err != nil {
+				log.Printf("[OTP] email send failed for %s: %v", email, err)
+			}
 		}
 		writeJSON(w, 200, resp)
 	}

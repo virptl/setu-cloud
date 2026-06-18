@@ -36,6 +36,13 @@ type Config struct {
 	ConsumerTID   string
 	OTPDevMode    bool
 	OTPTTLMinutes int
+
+	// SMTP — used for OTP email delivery when OTPDevMode is false.
+	SMTPHost     string
+	SMTPPort     string
+	SMTPUser     string
+	SMTPPassword string
+	SMTPFrom     string
 }
 
 func Load() (*Config, error) {
@@ -55,12 +62,25 @@ func Load() (*Config, error) {
 		CloudPrivKeyHex:     env("CLOUD_PRIVKEY_HEX", ""),
 		KeyEncryptionKey:    env("KEY_ENCRYPTION_KEY", ""),
 		ConsumerTID:         env("CONSUMER_TID", "setu"),
-		OTPDevMode:          env("OTP_DEV_MODE", "true") == "true",
+		OTPDevMode:          env("OTP_DEV_MODE", "false") == "true",
 		OTPTTLMinutes:       10,
+		SMTPHost:            env("SMTP_HOST", "smtp.gmail.com"),
+		SMTPPort:            env("SMTP_PORT", "465"),
+		SMTPUser:            env("SMTP_USER", ""),
+		SMTPPassword:        env("SMTP_PASSWORD", ""),
+		SMTPFrom:            env("SMTP_FROM", ""),
 	}
 
 	if c.DeviceMQTTBrokerURI == "" {
 		c.DeviceMQTTBrokerURI = c.MQTTBrokerURL
+	}
+
+	if c.SMTPFrom == "" {
+		c.SMTPFrom = c.SMTPUser
+	}
+
+	if !c.OTPDevMode && c.SMTPUser != "" && c.SMTPPassword == "" {
+		panic("SMTP_PASSWORD is required when SMTP_USER is set")
 	}
 
 	return c, nil

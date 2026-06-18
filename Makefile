@@ -18,7 +18,7 @@ build-admin:
 	go build -o $(ADMIN_BIN) ./admin
 
 admin: build-admin
-	./$(ADMIN_BIN)
+	./$(ADMIN_BIN) -addr 127.0.0.1:9090
 
 create-admin: build-admin
 	./$(ADMIN_BIN) --create-admin $(ADMIN_USER)

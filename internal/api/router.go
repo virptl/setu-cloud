@@ -66,6 +66,8 @@ func NewRouter(
 		// Public auth endpoints
 		r.Post("/auth/otp/request", app.RequestOTP(db, cfg))
 		r.Post("/auth/otp/verify", app.VerifyOTP(db, cfg))
+		r.Post("/auth/register", app.Register(db, cfg))
+		r.Post("/auth/login", app.Login(db, cfg))
 		r.Post("/auth/guest", app.Guest(db, cfg))
 		r.Post("/auth/logout", app.Logout())
 

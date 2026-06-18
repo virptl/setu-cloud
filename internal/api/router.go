@@ -69,7 +69,8 @@ func NewRouter(
 		r.Post("/auth/register", app.Register(db, cfg))
 		r.Post("/auth/login", app.Login(db, cfg))
 		r.Post("/auth/guest", app.Guest(db, cfg))
-		r.Post("/auth/logout", app.Logout())
+		r.Post("/auth/refresh", app.Refresh(db, cfg))
+		r.Post("/auth/logout", app.Logout(db))
 
 		// Authenticated (app user JWT)
 		r.Group(func(r chi.Router) {

@@ -2,6 +2,8 @@ package app
 
 import (
 	cryptorand "crypto/rand"
+	"crypto/sha256"
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -20,6 +22,8 @@ import (
 	"github.com/setucore/setu-cloud/internal/config"
 	emailsvc "github.com/setucore/setu-cloud/internal/email"
 )
+
+const refreshTTL = 60 * 24 * time.Hour // 60-day sliding window
 
 type userDTO struct {
 	ID          string `json:"id"`
@@ -45,22 +49,49 @@ func issueToken(secret, tid, uid, role string, ttl time.Duration) (string, error
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(secret))
 }
 
-func mintSession(cfg *config.Config, uid, email, name, role string, isGuest bool) session {
-	access, _ := issueToken(cfg.JWTSecret, cfg.ConsumerTID, uid, role, 15*time.Minute)
-	refresh, _ := issueToken(cfg.JWTSecret, cfg.ConsumerTID, uid, role, 30*24*time.Hour)
-	return session{
-		User:         userDTO{ID: uid, Email: email, IsGuest: isGuest, DisplayName: name},
-		AccessToken:  access,
-		RefreshToken: refresh,
-	}
-}
-
 func secureToken() (string, error) {
 	b := make([]byte, 32)
 	if _, err := cryptorand.Read(b); err != nil {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
+}
+
+func hashToken(t string) string {
+	h := sha256.Sum256([]byte(t))
+	return hex.EncodeToString(h[:])
+}
+
+// storeRefreshToken inserts a new (possibly rotated) refresh token into the DB.
+// familyID is shared across all rotations of a single login session.
+func storeRefreshToken(ctx context.Context, db *pgxpool.Pool, uid, familyID, plain string) error {
+	_, err := db.Exec(ctx,
+		`INSERT INTO refresh_tokens (id, family_id, user_id, token_hash, expires_at)
+		 VALUES ($1, $2, $3, $4, $5)`,
+		uuid.New(), familyID, uid, hashToken(plain), time.Now().Add(refreshTTL))
+	return err
+}
+
+// mintSession issues an access JWT + opaque refresh token, storing the refresh
+// token hashed in the DB. familyID is the new rotation family UUID.
+func mintSession(ctx context.Context, db *pgxpool.Pool, cfg *config.Config, uid, email, name, role string, isGuest bool) (session, error) {
+	access, err := issueToken(cfg.JWTSecret, cfg.ConsumerTID, uid, role, 15*time.Minute)
+	if err != nil {
+		return session{}, err
+	}
+	refreshPlain, err := secureToken()
+	if err != nil {
+		return session{}, err
+	}
+	familyID := uuid.New().String()
+	if err := storeRefreshToken(ctx, db, uid, familyID, refreshPlain); err != nil {
+		return session{}, err
+	}
+	return session{
+		User:         userDTO{ID: uid, Email: email, IsGuest: isGuest, DisplayName: name},
+		AccessToken:  access,
+		RefreshToken: refreshPlain,
+	}, nil
 }
 
 // RequestOTP handles POST /v1/auth/otp/request.
@@ -103,7 +134,6 @@ func RequestOTP(db *pgxpool.Pool, cfg *config.Config) http.HandlerFunc {
 		resp := map[string]any{"sent": true}
 		if cfg.OTPDevMode {
 			log.Printf("[OTP] %s -> %s", email, code)
-			resp["dev_code"] = code
 		} else {
 			if err := emailsvc.SendOTP(
 				cfg.SMTPHost, cfg.SMTPPort,
@@ -252,7 +282,12 @@ func Register(db *pgxpool.Pool, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		writeJSON(w, 200, mintSession(cfg, uid, email, name, "user", false))
+		sess, err := mintSession(r.Context(), db, cfg, uid, email, name, "user", false)
+		if err != nil {
+			writeErr(w, 500, "server_error", "could not create session")
+			return
+		}
+		writeJSON(w, 200, sess)
 	}
 }
 
@@ -308,7 +343,12 @@ func Login(db *pgxpool.Pool, cfg *config.Config) http.HandlerFunc {
 		db.Exec(r.Context(),
 			`UPDATE app_users SET failed_login_attempts=0, locked_until=NULL WHERE id=$1`, uid)
 
-		writeJSON(w, 200, mintSession(cfg, uid, email, name, "user", false))
+		sess, err := mintSession(r.Context(), db, cfg, uid, email, name, "user", false)
+		if err != nil {
+			writeErr(w, 500, "server_error", "could not create session")
+			return
+		}
+		writeJSON(w, 200, sess)
 	}
 }
 
@@ -327,9 +367,95 @@ func Guest(db *pgxpool.Pool, cfg *config.Config) http.HandlerFunc {
 	}
 }
 
-// Logout handles POST /v1/auth/logout — stateless JWT, no-op for MVP.
-func Logout() http.HandlerFunc {
+// Refresh handles POST /v1/auth/refresh.
+// No access token required — the request is authenticated by the refresh token itself.
+// Rotates on every call (single-use) and detects reuse by revoking the entire family.
+func Refresh(db *pgxpool.Pool, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			RefreshToken string `json:"refreshToken"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.RefreshToken == "" {
+			writeErr(w, 401, "invalid_refresh", "session expired, please log in")
+			return
+		}
+
+		tokenHash := hashToken(body.RefreshToken)
+
+		var id, familyID, userID string
+		var usedAt, revokedAt *time.Time
+		var expiresAt time.Time
+		err := db.QueryRow(r.Context(), `
+			SELECT id, family_id, user_id, used_at, revoked_at, expires_at
+			FROM refresh_tokens WHERE token_hash = $1`,
+			tokenHash).Scan(&id, &familyID, &userID, &usedAt, &revokedAt, &expiresAt)
+		if err != nil {
+			writeErr(w, 401, "invalid_refresh", "session expired, please log in")
+			return
+		}
+
+		// Entire family was revoked due to prior reuse detection.
+		if revokedAt != nil {
+			writeErr(w, 401, "invalid_refresh", "session expired, please log in")
+			return
+		}
+
+		// Token already used → reuse detected → revoke entire family.
+		if usedAt != nil {
+			db.Exec(r.Context(),
+				`UPDATE refresh_tokens SET revoked_at = NOW() WHERE family_id = $1`, familyID)
+			writeErr(w, 401, "invalid_refresh", "session expired, please log in")
+			return
+		}
+
+		if time.Now().After(expiresAt) {
+			writeErr(w, 401, "invalid_refresh", "session expired, please log in")
+			return
+		}
+
+		// Mark this token consumed before issuing the replacement.
+		db.Exec(r.Context(), `UPDATE refresh_tokens SET used_at = NOW() WHERE id = $1`, id)
+
+		// Issue new access JWT + new refresh token in the same family.
+		access, err := issueToken(cfg.JWTSecret, cfg.ConsumerTID, userID, "user", 15*time.Minute)
+		if err != nil {
+			writeErr(w, 500, "server_error", "could not issue token")
+			return
+		}
+		refreshPlain, err := secureToken()
+		if err != nil {
+			writeErr(w, 500, "server_error", "could not issue token")
+			return
+		}
+		if err := storeRefreshToken(r.Context(), db, userID, familyID, refreshPlain); err != nil {
+			writeErr(w, 500, "server_error", "could not store token")
+			return
+		}
+
+		writeJSON(w, 200, map[string]string{
+			"accessToken":  access,
+			"refreshToken": refreshPlain,
+		})
+	}
+}
+
+// Logout handles POST /v1/auth/logout.
+// Revokes the presented refresh token's entire family so no further rotations can occur.
+func Logout(db *pgxpool.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			RefreshToken string `json:"refreshToken"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err == nil && body.RefreshToken != "" {
+			// Revoke the whole family so all prior siblings are also invalidated.
+			db.Exec(r.Context(), `
+				UPDATE refresh_tokens SET revoked_at = NOW()
+				WHERE family_id = (
+					SELECT family_id FROM refresh_tokens
+					WHERE token_hash = $1 AND used_at IS NULL AND revoked_at IS NULL
+					LIMIT 1
+				)`, hashToken(body.RefreshToken))
+		}
 		w.WriteHeader(http.StatusNoContent)
 	}
 }

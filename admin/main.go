@@ -59,7 +59,6 @@ type device struct {
 	DID           string          `json:"did"`
 	PID           string          `json:"pid"`
 	MQUser        string          `json:"mq_user"`
-	MQPass        string          `json:"mq_pass"`
 	HWConfig      json.RawMessage `json:"hw_config"`
 	RegisteredAt  time.Time       `json:"registered_at"`
 	ProvisionedAt *time.Time      `json:"provisioned_at"`
@@ -368,7 +367,7 @@ func (s *server) deleteAdminUser(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) listDevices(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.db.Query(r.Context(), `
-		SELECT mac, tid, did, pid, mq_user, mq_pass, hw_config, registered_at, provisioned_at
+		SELECT mac, tid, did, pid, mq_user, hw_config, registered_at, provisioned_at
 		FROM device_inventory ORDER BY registered_at DESC`)
 	if err != nil {
 		writeErr(w, 500, err.Error())
@@ -379,7 +378,7 @@ func (s *server) listDevices(w http.ResponseWriter, r *http.Request) {
 	out := []device{}
 	for rows.Next() {
 		var d device
-		if err := rows.Scan(&d.MAC, &d.TID, &d.DID, &d.PID, &d.MQUser, &d.MQPass,
+		if err := rows.Scan(&d.MAC, &d.TID, &d.DID, &d.PID, &d.MQUser,
 			&d.HWConfig, &d.RegisteredAt, &d.ProvisionedAt); err == nil {
 			out = append(out, d)
 		}

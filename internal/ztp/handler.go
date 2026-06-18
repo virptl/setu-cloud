@@ -34,11 +34,9 @@ type provisionResp struct {
 // HandleProvision serves POST /factory/provision.
 func HandleProvision(db *pgxpool.Pool, cfg *config.Config, ks *keystore.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if cfg.FactoryProvToken != "" {
-			if r.Header.Get("X-Factory-Token") != cfg.FactoryProvToken {
-				http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
-				return
-			}
+		if r.Header.Get("X-Factory-Token") != cfg.FactoryProvToken {
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
 		}
 
 		var req provisionReq

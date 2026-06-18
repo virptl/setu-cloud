@@ -21,6 +21,7 @@ type Claims struct {
 }
 
 const uidKey contextKey = "uid"
+const roleKey contextKey = "role"
 
 // AuthUser validates a consumer (app user) JWT and injects tid + uid.
 func AuthUser(secret string) func(http.Handler) http.Handler {
@@ -45,6 +46,7 @@ func AuthUser(secret string) func(http.Handler) http.Handler {
 			}
 			ctx := context.WithValue(r.Context(), tidKey, claims.TID)
 			ctx = context.WithValue(ctx, uidKey, claims.UID)
+			ctx = context.WithValue(ctx, roleKey, claims.Role)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
@@ -54,6 +56,12 @@ func AuthUser(secret string) func(http.Handler) http.Handler {
 func UIDFromContext(ctx context.Context) string {
 	uid, _ := ctx.Value(uidKey).(string)
 	return uid
+}
+
+// RoleFromContext extracts the role injected by AuthUser middleware.
+func RoleFromContext(ctx context.Context) string {
+	role, _ := ctx.Value(roleKey).(string)
+	return role
 }
 
 // bearerToken extracts a JWT from the Authorization header or ?token= query param.

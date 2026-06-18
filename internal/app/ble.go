@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/setucore/setu-cloud/internal/api/middleware"
@@ -28,29 +29,58 @@ func SignBLENonce(db *pgxpool.Pool, ks *keystore.Service) http.HandlerFunc {
 			writeErr(w, 400, "bad_request", "device_id and nonce required")
 			return
 		}
-		if b.Role == "" {
-			b.Role = "owner"
+
+		if middleware.RoleFromContext(r.Context()) == "guest" {
+			writeErr(w, 403, "forbidden", "guests cannot sign BLE credentials")
+			return
 		}
 
-		// Refuse to sign for a device already claimed by a different user.
+		// Role allowlist — only known roles may appear in the signed payload.
+		validRoles := map[string]bool{"owner": true, "user": true}
+		if b.Role == "" {
+			b.Role = "owner"
+		} else if !validRoles[b.Role] {
+			writeErr(w, 400, "bad_request", "invalid role")
+			return
+		}
+
+		// Look up the device's TID and PID — also verifies the device exists.
+		// The cloud_pk burned into the device at ZTP belongs to its tenant, not the
+		// app user's tenant (app JWT always carries ConsumerTID="setu").
+		var deviceTID, devicePID string
+		db.QueryRow(r.Context(),
+			`SELECT tid, pid FROM devices WHERE did=$1`, b.DeviceID).Scan(&deviceTID, &devicePID)
+		if deviceTID == "" {
+			writeErr(w, 404, "not_found", "device not found")
+			return
+		}
+
+		// TOFU ownership: the first authenticated non-guest user to sign for a
+		// device claims it. Physical BLE proximity is the possession proof.
 		uid := middleware.UIDFromContext(r.Context())
 		var ownerID string
 		db.QueryRow(r.Context(),
 			`SELECT owner_id FROM app_devices WHERE did=$1`, b.DeviceID).Scan(&ownerID)
+
 		if ownerID != "" && ownerID != uid {
 			writeErr(w, 403, "forbidden", "device already claimed by another user")
 			return
 		}
 
-		// Look up the device's own TID — the cloud_pk burned into the device
-		// at ZTP time belongs to the device's tenant, not the app user's tenant.
-		// (App JWT always carries ConsumerTID="setu" regardless of device TID.)
-		var deviceTID string
-		db.QueryRow(r.Context(),
-			`SELECT tid FROM devices WHERE did=$1`, b.DeviceID).Scan(&deviceTID)
-		if deviceTID == "" {
-			// Device not in devices table yet (pre-ZTP claim). Fall back to user's TID.
-			deviceTID = middleware.TIDFromContext(r.Context())
+		if ownerID == "" {
+			// Auto-claim with placeholder metadata; user updates via /devices/adopt.
+			db.Exec(r.Context(), `
+				INSERT INTO app_devices (id, owner_id, tid, did, pid, name, room, type, icon)
+				VALUES ($1, $2, $3, $4, $5, 'New Device', 'Living Room', $6, '')
+				ON CONFLICT (did) DO NOTHING`,
+				uuid.New(), uid, deviceTID, b.DeviceID, devicePID, deviceTypeForPID(devicePID))
+			// Re-read to detect a simultaneous claim race.
+			db.QueryRow(r.Context(),
+				`SELECT owner_id FROM app_devices WHERE did=$1`, b.DeviceID).Scan(&ownerID)
+			if ownerID != uid {
+				writeErr(w, 403, "forbidden", "device already claimed by another user")
+				return
+			}
 		}
 
 		tk, err := ks.ActiveKey(r.Context(), deviceTID)

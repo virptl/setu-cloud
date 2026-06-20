@@ -15,8 +15,11 @@ import (
 	"github.com/setucore/setu-cloud/internal/cache"
 	"github.com/setucore/setu-cloud/internal/config"
 	"github.com/setucore/setu-cloud/internal/db"
+	"github.com/setucore/setu-cloud/internal/iot"
 	"github.com/setucore/setu-cloud/internal/keystore"
 	internalmqtt "github.com/setucore/setu-cloud/internal/mqtt"
+	"github.com/setucore/setu-cloud/internal/oauth"
+	"github.com/setucore/setu-cloud/internal/proactive"
 	"github.com/setucore/setu-cloud/internal/ws"
 )
 
@@ -76,6 +79,13 @@ func main() {
 	hub := ws.NewHub(redisClient)
 	go hub.RunRedisSubscriber(ctx)
 
+	// ── Voice assistant services ──────────────────────────────────────────────
+	pub := internalmqtt.NewPublisher(mqttClient)
+	oauthStore := oauth.NewStore(pool)
+	iotSvc := iot.New(pool, redisClient, pub, cfg)
+	proactiveSvc := proactive.New(redisClient, oauthStore, iotSvc, cfg)
+	go proactiveSvc.Run(ctx)
+
 	// ── device_events cleanup ─────────────────────────────────────────────────
 	// Runs once at startup (catches any backlog) then every 24 hours.
 	// Requires idx_device_events_ts (migration 0009).
@@ -103,8 +113,7 @@ func main() {
 	}()
 
 	// ── HTTP server ───────────────────────────────────────────────────────────
-	pub := internalmqtt.NewPublisher(mqttClient)
-	handler := api.NewRouter(pool, redisClient, pub, hub, cfg, ks)
+	handler := api.NewRouter(pool, redisClient, pub, hub, cfg, ks, oauthStore, iotSvc, proactiveSvc)
 
 	srv := &http.Server{
 		Addr:         cfg.ListenAddr,

@@ -16,6 +16,12 @@ import (
 	"github.com/setucore/setu-cloud/internal/mqtt"
 )
 
+// DiscoveryRefresher is implemented by proactive.Service and called after a device
+// is claimed or adopted so voice assistants re-discover the new device.
+type DiscoveryRefresher interface {
+	TriggerDiscoveryRefresh(userID string)
+}
+
 type deviceDTO struct {
 	ID           string         `json:"id"`
 	DID          string         `json:"did"`
@@ -73,7 +79,7 @@ func ListDevices(db *pgxpool.Pool) http.HandlerFunc {
 }
 
 // ClaimDevice handles POST /v1/devices/claim.
-func ClaimDevice(db *pgxpool.Pool, cfg *config.Config) http.HandlerFunc {
+func ClaimDevice(db *pgxpool.Pool, cfg *config.Config, refresher ...DiscoveryRefresher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		uid := middleware.UIDFromContext(r.Context())
 		var b struct {
@@ -124,6 +130,9 @@ func ClaimDevice(db *pgxpool.Pool, cfg *config.Config) http.HandlerFunc {
 			uuid.New(), uid, cfg.ConsumerTID, did, pid, b.Name, b.Room, b.Type, b.Icon); err != nil {
 			writeErr(w, 409, "conflict", "device already claimed")
 			return
+		}
+		if len(refresher) > 0 && refresher[0] != nil {
+			go refresher[0].TriggerDiscoveryRefresh(uid)
 		}
 		writeJSON(w, 201, deviceDTO{
 			ID: did, DID: did, PID: pid, Name: b.Name, Room: b.Room, Type: b.Type, Icon: b.Icon,
@@ -208,7 +217,7 @@ func Command(db *pgxpool.Pool, pub *mqtt.Publisher, cfg *config.Config) http.Han
 }
 
 // AdoptDevice handles POST /v1/devices/adopt — links a real provisioned device to a user.
-func AdoptDevice(db *pgxpool.Pool, cfg *config.Config) http.HandlerFunc {
+func AdoptDevice(db *pgxpool.Pool, cfg *config.Config, refresher ...DiscoveryRefresher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		uid := middleware.UIDFromContext(r.Context())
 		var b struct {
@@ -260,11 +269,36 @@ func AdoptDevice(db *pgxpool.Pool, cfg *config.Config) http.HandlerFunc {
 		dps := reportedDPS(r.Context(), db, cfg.ConsumerTID, did)
 		on, _ := dps["1"].(bool)
 		typ := deviceTypeForPID(pid)
+		if len(refresher) > 0 && refresher[0] != nil {
+			go refresher[0].TriggerDiscoveryRefresh(uid)
+		}
 		writeJSON(w, 201, deviceDTO{
 			ID: did, DID: did, PID: pid, Name: b.Name, Room: b.Room, Type: typ, Icon: b.Icon,
 			On: on, Offline: false, Metric: metricFor(typ, on, dps),
 			DPS: dps, Capabilities: prof.Caps,
 		})
+	}
+}
+
+// LinkedAccounts handles GET /v1/linked-accounts.
+// Returns which voice platforms the current user has linked.
+func LinkedAccounts(db *pgxpool.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		uid := middleware.UIDFromContext(r.Context())
+		rows, err := db.Query(r.Context(),
+			`SELECT platform FROM linked_accounts WHERE user_id=$1 AND unlinked_at IS NULL`, uid)
+		if err != nil {
+			writeErr(w, 500, "internal", err.Error())
+			return
+		}
+		defer rows.Close()
+		result := map[string]bool{"alexa": false, "google": false}
+		for rows.Next() {
+			var platform string
+			rows.Scan(&platform)
+			result[platform] = true
+		}
+		writeJSON(w, 200, result)
 	}
 }
 

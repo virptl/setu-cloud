@@ -43,6 +43,11 @@ type Config struct {
 	SMTPUser     string
 	SMTPPassword string
 	SMTPFrom     string
+
+	// Voice assistant integrations
+	// GoogleSAToken is a short-lived Bearer token for Google Home Graph API (Report State / requestSync).
+	// In production, rotate this externally (e.g. via a cron that exchanges a service account key).
+	GoogleSAToken string
 }
 
 func Load() (*Config, error) {
@@ -69,6 +74,7 @@ func Load() (*Config, error) {
 		SMTPUser:            env("SMTP_USER", ""),
 		SMTPPassword:        env("SMTP_PASSWORD", ""),
 		SMTPFrom:            env("SMTP_FROM", ""),
+		GoogleSAToken:       env("GOOGLE_SA_TOKEN", ""),
 	}
 
 	if c.DeviceMQTTBrokerURI == "" {

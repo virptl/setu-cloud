@@ -126,6 +126,9 @@ func capsForPID(pid string) []Capability {
 	return productProfiles["gen1"].Capabilities
 }
 
+// CapsForPID is the exported version of capsForPID for use by voice assistant adapters.
+func CapsForPID(pid string) []Capability { return capsForPID(pid) }
+
 // deviceTypeForPID maps a product ID to its consumer type string.
 func deviceTypeForPID(pid string) string {
 	if pp, ok := productProfiles[pid]; ok {
@@ -133,6 +136,9 @@ func deviceTypeForPID(pid string) string {
 	}
 	return "sensors"
 }
+
+// DeviceTypeForPID is the exported version of deviceTypeForPID for use by voice assistant adapters.
+func DeviceTypeForPID(pid string) string { return deviceTypeForPID(pid) }
 
 // dpKindsForPID returns a dp→kind map for the given pid (used for command validation).
 func dpKindsForPID(pid string) map[string]string {

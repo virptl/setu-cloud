@@ -19,6 +19,7 @@ import (
 type deviceDTO struct {
 	ID           string         `json:"id"`
 	DID          string         `json:"did"`
+	PID          string         `json:"pid"`
 	Name         string         `json:"name"`
 	Room         string         `json:"room"`
 	Type         string         `json:"type"`
@@ -62,9 +63,9 @@ func ListDevices(db *pgxpool.Pool) http.HandlerFunc {
 			dps := reportedDPS(r.Context(), db, deviceTID, did)
 			on, _ := dps["1"].(bool)
 			out = append(out, deviceDTO{
-				ID: did, DID: did, Name: name, Room: room, Type: typ, Icon: icon,
+				ID: did, DID: did, PID: pid, Name: name, Room: room, Type: typ, Icon: icon,
 				On: on, Offline: !online, Metric: metricFor(typ, on, dps),
-				DPS: dps, Capabilities: profileForType(typ).Caps,
+				DPS: dps, Capabilities: capsForPID(pid),
 			})
 		}
 		writeJSON(w, 200, out)
@@ -125,7 +126,7 @@ func ClaimDevice(db *pgxpool.Pool, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, 201, deviceDTO{
-			ID: did, DID: did, Name: b.Name, Room: b.Room, Type: b.Type, Icon: b.Icon,
+			ID: did, DID: did, PID: pid, Name: b.Name, Room: b.Room, Type: b.Type, Icon: b.Icon,
 			On: false, Offline: true, Metric: "Off",
 			DPS:          map[string]any{"1": false},
 			Capabilities: prof.Caps,
@@ -163,6 +164,24 @@ func Command(db *pgxpool.Pool, pub *mqtt.Publisher, cfg *config.Config) http.Han
 		if realPID != "" {
 			pid = realPID
 		}
+		// Validate color dp values: must be {r,g,b} with each channel 0–255.
+		if dpKinds := dpKindsForPID(pid); dpKinds != nil {
+			for dp, val := range b.DPS {
+				if dpKinds[dp] == "color" {
+					var rgb struct {
+						R int `json:"r"`
+						G int `json:"g"`
+						B int `json:"b"`
+					}
+					if err := json.Unmarshal(val, &rgb); err != nil ||
+						rgb.R < 0 || rgb.R > 255 || rgb.G < 0 || rgb.G > 255 || rgb.B < 0 || rgb.B > 255 {
+						writeErr(w, 400, "bad_request", "color dp requires {\"r\":0-255,\"g\":0-255,\"b\":0-255}")
+						return
+					}
+				}
+			}
+		}
+
 		cmdID := uuid.New().String()
 		payload, _ := json.Marshal(b.DPS)
 		db.Exec(r.Context(),
@@ -242,24 +261,10 @@ func AdoptDevice(db *pgxpool.Pool, cfg *config.Config) http.HandlerFunc {
 		on, _ := dps["1"].(bool)
 		typ := deviceTypeForPID(pid)
 		writeJSON(w, 201, deviceDTO{
-			ID: did, DID: did, Name: b.Name, Room: b.Room, Type: typ, Icon: b.Icon,
+			ID: did, DID: did, PID: pid, Name: b.Name, Room: b.Room, Type: typ, Icon: b.Icon,
 			On: on, Offline: false, Metric: metricFor(typ, on, dps),
 			DPS: dps, Capabilities: prof.Caps,
 		})
-	}
-}
-
-// deviceTypeForPID maps a product ID back to a device type string.
-func deviceTypeForPID(pid string) string {
-	switch pid {
-	case "light1":
-		return "lighting"
-	case "th1":
-		return "climate"
-	case "sp1":
-		return "plug"
-	default:
-		return "sensors"
 	}
 }
 

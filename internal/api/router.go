@@ -81,6 +81,7 @@ func NewRouter(
 			r.Post("/ble/sign", app.SignBLENonce(db, ks))
 			r.Post("/devices/{id}/command", app.Command(db, pub, cfg))
 			r.Delete("/devices/{id}", app.DeleteDevice(db))
+			r.Get("/products/{pid}/profile", app.GetProductProfile())
 			r.Get("/rooms", app.Rooms())
 			r.Get("/scenes", app.Scenes())
 			r.Get("/automations", app.Automations())

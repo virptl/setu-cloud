@@ -257,12 +257,18 @@ func AdoptDevice(db *pgxpool.Pool, cfg *config.Config, refresher ...DiscoveryRef
 
 		prof := profileForType(deviceTypeForPID(pid))
 
-		// Link to this user's account.
-		if _, err := db.Exec(r.Context(), `
+		// Link to this user's account (using ON CONFLICT to allow claiming transfer or updating metadata).
+		_, err = db.Exec(r.Context(), `
 			INSERT INTO app_devices (id, owner_id, tid, did, pid, name, room, type, icon)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-		`, uuid.New(), uid, cfg.ConsumerTID, did, pid, b.Name, b.Room, deviceTypeForPID(pid), b.Icon); err != nil {
-			writeErr(w, 409, "conflict", "device already claimed")
+			ON CONFLICT (did) DO UPDATE SET
+			  owner_id = EXCLUDED.owner_id,
+			  name = EXCLUDED.name,
+			  room = EXCLUDED.room,
+			  icon = EXCLUDED.icon
+		`, uuid.New(), uid, cfg.ConsumerTID, did, pid, b.Name, b.Room, deviceTypeForPID(pid), b.Icon)
+		if err != nil {
+			writeErr(w, 500, "internal_error", err.Error())
 			return
 		}
 

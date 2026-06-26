@@ -1058,7 +1058,7 @@ MAC is normalized (case-insensitive, any delimiter).
   "mq_user":      "setu.3fa85f64",
   "mq_pass":      "device-mqtt-password",
   "mq_uri":       "mqtts://emqx.setuiot.com:8883",
-  "cloud_pubkey": "04a1b2c3d4e5f6...(130 hex chars, P-256 uncompressed)",
+  "cloud_pubkey": "a1b2c3d4e5f6...(128 hex chars = 64-byte P-256 X‖Y, uncompressed, NO 0x04 prefix)",
   "hw_config":    {"gpio_relay": 4, "gpio_led": 2}
 }
 ```

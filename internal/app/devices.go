@@ -45,10 +45,10 @@ func ListDevices(db *pgxpool.Pool) http.HandlerFunc {
 		// may differ from app_devices.tid, so we prefer the most recently seen row.
 		rows, err := db.Query(r.Context(), `
 			SELECT ad.did, ad.pid, ad.name, ad.room, ad.type, ad.icon,
-			       COALESCE(d.is_online, false), COALESCE(d.tid, ad.tid)
+			       COALESCE(d.is_online, false), COALESCE(d.tid, ad.tid), COALESCE(d.schema_version, 0)
 			FROM app_devices ad
 			LEFT JOIN LATERAL (
-			    SELECT is_online, tid FROM devices
+			    SELECT is_online, tid, schema_version FROM devices
 			    WHERE did = ad.did
 			    ORDER BY is_online DESC, last_seen_at DESC NULLS LAST
 			    LIMIT 1
@@ -65,13 +65,14 @@ func ListDevices(db *pgxpool.Pool) http.HandlerFunc {
 		for rows.Next() {
 			var did, pid, name, room, typ, icon, deviceTID string
 			var online bool
-			rows.Scan(&did, &pid, &name, &room, &typ, &icon, &online, &deviceTID)
+			var schemaVersion int
+			rows.Scan(&did, &pid, &name, &room, &typ, &icon, &online, &deviceTID, &schemaVersion)
 			dps := reportedDPS(r.Context(), db, deviceTID, did)
 			on, _ := dps["1"].(bool)
 			out = append(out, deviceDTO{
 				ID: did, DID: did, PID: pid, Name: name, Room: room, Type: typ, Icon: icon,
 				On: on, Offline: !online, Metric: metricFor(typ, on, dps),
-				DPS: dps, Capabilities: capsForPID(pid),
+				DPS: dps, Capabilities: ResolveCapabilities(r.Context(), db, pid, schemaVersion),
 			})
 		}
 		writeJSON(w, 200, out)

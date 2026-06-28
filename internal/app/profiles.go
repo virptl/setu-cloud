@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -134,6 +135,35 @@ func capsForPID(pid string) []Capability {
 
 // CapsForPID is the exported version of capsForPID for use by voice assistant adapters.
 func CapsForPID(pid string) []Capability { return capsForPID(pid) }
+
+// ResolveCapabilities returns the capabilities for a pid, first checking released_products database, then falling back to static map.
+func ResolveCapabilities(ctx context.Context, db *pgxpool.Pool, pid string, version int) []Capability {
+	var raw []byte
+	var err error
+	if version > 0 {
+		err = db.QueryRow(ctx,
+			`SELECT schema_json FROM released_products
+  WHERE pid=$1 AND version=$2`, pid, version).Scan(&raw)
+	} else {
+		err = db.QueryRow(ctx,
+			`SELECT schema_json FROM released_products
+  WHERE pid=$1 ORDER BY version DESC LIMIT 1`, pid).Scan(&raw)
+	}
+
+	if err == nil {
+		art, perr := schema.Parse(raw)
+		if perr == nil {
+			p := art.AppProfile()
+			caps := make([]Capability, 0, len(p.Capabilities))
+			for _, c := range p.Capabilities {
+				caps = append(caps, Capability{DP: c.DP, Kind: c.Kind, Label: c.Label, Min: c.Min, Max: c.Max, Unit: c.Unit})
+			}
+			return caps
+		}
+	}
+
+	return capsForPID(pid)
+}
 
 // deviceTypeForPID maps a product ID to its consumer type string.
 func deviceTypeForPID(pid string) string {

@@ -13,16 +13,17 @@ import (
 
 // Device is the full device record from PostgreSQL.
 type Device struct {
-	TID          string
-	DID          string
-	PID          string
-	FWVersion    string
-	IP           string
-	RSSI         int
-	IsOnline     bool
-	RegisteredAt time.Time
-	LastSeenAt   *time.Time
-	HWConfig     json.RawMessage
+	TID           string
+	DID           string
+	PID           string
+	FWVersion     string
+	IP            string
+	RSSI          int
+	IsOnline      bool
+	RegisteredAt  time.Time
+	LastSeenAt    *time.Time
+	HWConfig      json.RawMessage
+	SchemaVersion *int
 }
 
 type Service struct {
@@ -41,9 +42,10 @@ func onlineKey(tid, did string) string {
 // SetOnlineCached records online state in Redis.
 //
 // online=true:  key is set with NO expiry. The device stays online until an
-//   explicit offline signal (LWT, clean shutdown, $SYS disconnect event).
-//   We no longer rely on TTL expiry because idle devices (no DP changes) never
-//   refresh their /shd, so a TTL would falsely mark them offline.
+//
+//	explicit offline signal (LWT, clean shutdown, $SYS disconnect event).
+//	We no longer rely on TTL expiry because idle devices (no DP changes) never
+//	refresh their /shd, so a TTL would falsely mark them offline.
 //
 // online=false: key is deleted immediately.
 func (s *Service) SetOnlineCached(ctx context.Context, tid, did string, online bool) error {
@@ -88,12 +90,12 @@ func (s *Service) Get(ctx context.Context, tid, did string) (*Device, error) {
 	var d Device
 	err := s.db.QueryRow(ctx, `
 		SELECT tid, did, pid, COALESCE(fw_version,''), COALESCE(ip,''),
-		       COALESCE(rssi,0), is_online, registered_at, last_seen_at, hw_config
+		       COALESCE(rssi,0), is_online, registered_at, last_seen_at, hw_config, schema_version
 		  FROM devices
 		 WHERE tid=$1 AND did=$2
 	`, tid, did).Scan(
 		&d.TID, &d.DID, &d.PID, &d.FWVersion, &d.IP,
-		&d.RSSI, &d.IsOnline, &d.RegisteredAt, &d.LastSeenAt, &d.HWConfig,
+		&d.RSSI, &d.IsOnline, &d.RegisteredAt, &d.LastSeenAt, &d.HWConfig, &d.SchemaVersion,
 	)
 	if err == pgx.ErrNoRows {
 		return nil, fmt.Errorf("device %s/%s not found", tid, did)
@@ -110,7 +112,7 @@ func (s *Service) Get(ctx context.Context, tid, did string) (*Device, error) {
 func (s *Service) List(ctx context.Context, tid string) ([]Device, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT tid, did, pid, COALESCE(fw_version,''), COALESCE(ip,''),
-		       COALESCE(rssi,0), is_online, registered_at, last_seen_at, hw_config
+		       COALESCE(rssi,0), is_online, registered_at, last_seen_at, hw_config, schema_version
 		  FROM devices
 		 WHERE tid=$1
 		 ORDER BY registered_at DESC
@@ -125,7 +127,7 @@ func (s *Service) List(ctx context.Context, tid string) ([]Device, error) {
 		var d Device
 		if err := rows.Scan(
 			&d.TID, &d.DID, &d.PID, &d.FWVersion, &d.IP,
-			&d.RSSI, &d.IsOnline, &d.RegisteredAt, &d.LastSeenAt, &d.HWConfig,
+			&d.RSSI, &d.IsOnline, &d.RegisteredAt, &d.LastSeenAt, &d.HWConfig, &d.SchemaVersion,
 		); err != nil {
 			return nil, err
 		}

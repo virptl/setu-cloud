@@ -7,6 +7,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"regexp"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -14,6 +16,40 @@ import (
 	"github.com/setucore/setu-cloud/internal/api/middleware"
 	"github.com/setucore/setu-cloud/internal/keystore"
 )
+
+var macNormRe = regexp.MustCompile(`^[0-9a-fA-F]{2}[:\-]?[0-9a-fA-F]{2}[:\-]?[0-9a-fA-F]{2}[:\-]?[0-9a-fA-F]{2}[:\-]?[0-9a-fA-F]{2}[:\-]?[0-9a-fA-F]{2}$`)
+
+// normMAC strips separators and lowercases a MAC string, returning "" if not a MAC.
+func normMAC(s string) string {
+	if !macNormRe.MatchString(s) {
+		return ""
+	}
+	return strings.ToLower(strings.NewReplacer(":", "", "-", "").Replace(s))
+}
+
+// resolveDeviceID returns (did, tid, pid) for whatever the app sends as device_id:
+// - any MAC format (Wi-Fi or BLE) → look up via device_inventory
+// - full or truncated UUID DID     → prefix-match in devices table
+func resolveDeviceID(r *http.Request, db *pgxpool.Pool, raw string) (did, tid, pid string) {
+	// MAC path: normalise and look up in device_inventory by wifi_mac or ble_mac.
+	if mac := normMAC(raw); mac != "" {
+		db.QueryRow(r.Context(), `
+			SELECT di.did, d.tid, d.pid
+			FROM device_inventory di
+			JOIN devices d ON d.did = di.did
+			WHERE (di.mac = $1 OR di.ble_mac = $1) AND di.provisioned_at IS NOT NULL
+			LIMIT 1
+		`, mac).Scan(&did, &tid, &pid)
+		return
+	}
+	// DID path: accept full UUID or firmware-truncated prefix (23 chars).
+	db.QueryRow(r.Context(), `
+		SELECT did, tid, pid FROM devices
+		WHERE LEFT(did, char_length($1)) = $1
+		LIMIT 1
+	`, raw).Scan(&did, &tid, &pid)
+	return
+}
 
 // SignBLENonce handles POST /v1/ble/sign.
 // Signs device_id‖nonce‖role with the tenant's active P-256 private key.
@@ -44,12 +80,12 @@ func SignBLENonce(db *pgxpool.Pool, ks *keystore.Service) http.HandlerFunc {
 			return
 		}
 
-		// Look up the device's TID and PID — also verifies the device exists.
-		// The cloud_pk burned into the device at ZTP belongs to its tenant, not the
-		// app user's tenant (app JWT always carries ConsumerTID="setu").
-		var deviceTID, devicePID string
-		db.QueryRow(r.Context(),
-			`SELECT tid, pid FROM devices WHERE did=$1`, b.DeviceID).Scan(&deviceTID, &devicePID)
+		// Resolve device_id to a canonical DID — accepts any MAC format (Wi-Fi or
+		// BLE, any separator/case) or a full/truncated UUID DID.
+		// resolvedDID is used for all DB lookups; b.DeviceID is kept as-received
+		// so the signing message matches what the firmware actually stored in NVS
+		// (firmware truncates the UUID to 23 chars due to a 24-byte NVS buffer).
+		resolvedDID, deviceTID, devicePID := resolveDeviceID(r, db, b.DeviceID)
 		if deviceTID == "" {
 			writeErr(w, 404, "not_found", "device not found")
 			return
@@ -60,7 +96,7 @@ func SignBLENonce(db *pgxpool.Pool, ks *keystore.Service) http.HandlerFunc {
 		uid := middleware.UIDFromContext(r.Context())
 		var ownerID string
 		db.QueryRow(r.Context(),
-			`SELECT owner_id FROM app_devices WHERE did=$1`, b.DeviceID).Scan(&ownerID)
+			`SELECT owner_id FROM app_devices WHERE did=$1`, resolvedDID).Scan(&ownerID)
 
 		if ownerID != "" && ownerID != uid {
 			writeErr(w, 403, "forbidden", "device already claimed by another user")
@@ -73,10 +109,10 @@ func SignBLENonce(db *pgxpool.Pool, ks *keystore.Service) http.HandlerFunc {
 				INSERT INTO app_devices (id, owner_id, tid, did, pid, name, room, type, icon)
 				VALUES ($1, $2, $3, $4, $5, 'New Device', 'Living Room', $6, '')
 				ON CONFLICT (did) DO NOTHING`,
-				uuid.New(), uid, deviceTID, b.DeviceID, devicePID, deviceTypeForPID(devicePID))
+				uuid.New(), uid, deviceTID, resolvedDID, devicePID, deviceTypeForPID(devicePID))
 			// Re-read to detect a simultaneous claim race.
 			db.QueryRow(r.Context(),
-				`SELECT owner_id FROM app_devices WHERE did=$1`, b.DeviceID).Scan(&ownerID)
+				`SELECT owner_id FROM app_devices WHERE did=$1`, resolvedDID).Scan(&ownerID)
 			if ownerID != uid {
 				writeErr(w, 403, "forbidden", "device already claimed by another user")
 				return

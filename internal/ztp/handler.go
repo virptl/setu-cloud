@@ -21,14 +21,15 @@ type provisionReq struct {
 }
 
 type provisionResp struct {
-	DID         string          `json:"did"`
-	TID         string          `json:"tid"`
-	PID         string          `json:"pid"`
-	MQUser      string          `json:"mq_user"`
-	MQPass      string          `json:"mq_pass"`
-	MQURI       string          `json:"mq_uri"`
-	CloudPubkey string          `json:"cloud_pubkey"`
-	HWConfig    json.RawMessage `json:"hw_config"`
+	DID           string          `json:"did"`
+	TID           string          `json:"tid"`
+	PID           string          `json:"pid"`
+	MQUser        string          `json:"mq_user"`
+	MQPass        string          `json:"mq_pass"`
+	MQURI         string          `json:"mq_uri"`
+	CloudPubkey   string          `json:"cloud_pubkey"`
+	SchemaVersion *int            `json:"schema_version,omitempty"`
+	HWConfig      json.RawMessage `json:"hw_config"`
 }
 
 // HandleProvision serves POST /factory/provision.
@@ -73,15 +74,29 @@ func HandleProvision(db *pgxpool.Pool, cfg *config.Config, ks *keystore.Service)
 			cloudPubkey = cfg.CloudPubkeyHex
 		}
 
+		// Project the firmware hw_config from the device's bound released schema
+		// (Shared contract B: {"config":{"dps":{…}}}, actuation != none only).
+		// Fall back to the per-device hw_config column if no schema is bound.
+		hwConfig := entry.HWConfig
+		if entry.SchemaVersion != nil {
+			if proj, perr := projectFirmwareConfig(r.Context(), db, entry.TID, entry.PID, *entry.SchemaVersion); perr != nil {
+				log.Printf("ztp: firmware projection tid=%s pid=%s v=%d: %v — falling back to stored hw_config",
+					entry.TID, entry.PID, *entry.SchemaVersion, perr)
+			} else {
+				hwConfig = proj
+			}
+		}
+
 		resp := provisionResp{
-			DID:         entry.DID,
-			TID:         entry.TID,
-			PID:         entry.PID,
-			MQUser:      entry.MQUser,
-			MQPass:      entry.MQPass,
-			MQURI:       cfg.DeviceMQTTBrokerURI,
-			CloudPubkey: cloudPubkey,
-			HWConfig:    entry.HWConfig,
+			DID:           entry.DID,
+			TID:           entry.TID,
+			PID:           entry.PID,
+			MQUser:        entry.MQUser,
+			MQPass:        entry.MQPass,
+			MQURI:         cfg.DeviceMQTTBrokerURI,
+			CloudPubkey:   cloudPubkey,
+			SchemaVersion: entry.SchemaVersion,
+			HWConfig:      hwConfig,
 		}
 
 		w.Header().Set("Content-Type", "application/json")

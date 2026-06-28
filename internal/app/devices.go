@@ -244,11 +244,11 @@ func AdoptDevice(db *pgxpool.Pool, cfg *config.Config, refresher ...DiscoveryRef
 			b.Room = "Living Room"
 		}
 
-		// Look up provisioned device in inventory.
+		// Look up provisioned device by Wi-Fi MAC or BLE MAC (ESP32: BLE = Wi-Fi + 2).
 		var did, pid string
 		err := db.QueryRow(r.Context(), `
 			SELECT did, pid FROM device_inventory
-			WHERE mac=$1 AND provisioned_at IS NOT NULL
+			WHERE (mac=$1 OR ble_mac=$1) AND provisioned_at IS NOT NULL
 		`, mac).Scan(&did, &pid)
 		if err != nil {
 			writeErr(w, 404, "not_found", "device not provisioned or not in inventory")

@@ -9,9 +9,9 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/setucore/setu-cloud/internal/alexa"
-	"github.com/setucore/setu-cloud/internal/app"
 	"github.com/setucore/setu-cloud/internal/api/handlers"
 	"github.com/setucore/setu-cloud/internal/api/middleware"
+	"github.com/setucore/setu-cloud/internal/app"
 	"github.com/setucore/setu-cloud/internal/config"
 	"github.com/setucore/setu-cloud/internal/google"
 	"github.com/setucore/setu-cloud/internal/iot"
@@ -55,6 +55,20 @@ func NewRouter(
 
 	// ── Factory ZTP — no JWT, network-isolated ────────────────────────────────
 	r.Post("/factory/provision", ztp.HandleProvision(db, cfg, ks))
+
+	// ── Admin / service-to-service (released products + inventory seeding) ─────
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.ServiceToken(cfg.AdminServiceToken))
+
+		r.Post("/admin/released-products", handlers.UpsertReleasedProduct(db))
+		r.Get("/admin/released-products", handlers.ListReleasedProducts(db))
+		r.Post("/admin/released-products/retire", handlers.RetireReleasedProduct(db))
+
+		r.Post("/admin/inventory/batches", handlers.CreateBatch(db, cfg))
+		r.Get("/admin/inventory", handlers.ListInventory(db))
+		r.Get("/admin/inventory/{did}/ztp", handlers.PreviewProvision(db, cfg, ks))
+		r.Get("/admin/batches", handlers.ListBatches(db))
+	})
 
 	// ── Authenticated routes ──────────────────────────────────────────────────
 	r.Group(func(r chi.Router) {
@@ -106,8 +120,10 @@ func NewRouter(
 			r.Post("/ble/sign", app.SignBLENonce(db, ks))
 			r.Post("/devices/{id}/command", app.Command(db, pub, cfg))
 			r.Delete("/devices/{id}", app.DeleteDevice(db))
+			r.Post("/auth/delete/otp", app.RequestDeleteOTP(db, cfg))
+			r.Delete("/auth/delete", app.DeleteAccount(db))
 			r.Get("/linked-accounts", app.LinkedAccounts(db))
-			r.Get("/products/{pid}/profile", app.GetProductProfile())
+			r.Get("/products/{pid}/profile", app.GetProductProfile(db))
 			r.Get("/rooms", app.Rooms())
 			r.Get("/scenes", app.Scenes())
 			r.Get("/automations", app.Automations())

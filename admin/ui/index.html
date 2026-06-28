@@ -55,21 +55,23 @@
   <!-- Tab headers -->
   <ul class="nav nav-tabs border-bottom mb-0" id="mainTab">
     <li class="nav-item">
-      <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-inventory" type="button">
+      <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-released" type="button"
+              onclick="loadReleased()">
+        <i class="bi bi-box-seam me-1"></i>Released Products
+      </button>
+    </li>
+    <li class="nav-item">
+      <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-addinv" type="button">
+        <i class="bi bi-plus-square me-1"></i>Add Inventory
+      </button>
+    </li>
+    <li class="nav-item">
+      <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-invdash" type="button"
+              onclick="loadInvDash()">
         <i class="bi bi-cpu me-1"></i>Inventory
       </button>
     </li>
-    <li class="nav-item">
-      <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-add" type="button">
-        <i class="bi bi-plus-circle me-1"></i>Add Device
-      </button>
-    </li>
-    <li class="nav-item">
-      <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-import" type="button">
-        <i class="bi bi-file-earmark-arrow-up me-1"></i>Bulk Import
-      </button>
-    </li>
-    <li class="nav-item">
+    <li class="nav-item border-start ms-2 ps-2">
       <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-keys" type="button"
               onclick="loadTenantKeys()">
         <i class="bi bi-key me-1"></i>Tenant Keys
@@ -85,219 +87,143 @@
 
   <div class="tab-content">
 
-    <!-- ── Inventory tab ──────────────────────────────────────────────────── -->
-    <div class="tab-pane fade show active" id="tab-inventory">
+    <!-- ── Released Products tab ──────────────────────────────────────────── -->
+    <div class="tab-pane fade show active" id="tab-released">
       <div class="card rounded-top-0">
-        <!-- Toolbar -->
         <div class="card-header bg-white d-flex align-items-center gap-2 py-2 flex-wrap">
-          <input class="form-control form-control-sm" style="max-width:240px"
-                 id="search" placeholder="Filter MAC / DID / PID…" oninput="filterTable()">
-          <select class="form-select form-select-sm w-auto" id="filter-status" onchange="filterTable()">
-            <option value="">All status</option>
-            <option value="pending">Pending</option>
-            <option value="provisioned">Provisioned</option>
-          </select>
-          <button class="btn btn-sm btn-outline-secondary ms-auto" onclick="loadDevices()" title="Refresh">
-            <i class="bi bi-arrow-clockwise"></i>
-          </button>
+          <span class="fw-semibold"><i class="bi bi-box-seam me-1 text-primary"></i>Released products from dev portal</span>
+          <input class="form-control form-control-sm ms-3" style="max-width:200px" id="rel-tid" placeholder="Filter TID…" oninput="renderReleased()">
+          <input class="form-control form-control-sm" style="max-width:180px" id="rel-pid" placeholder="Filter PID…" oninput="renderReleased()">
+          <button class="btn btn-sm btn-outline-secondary ms-auto" onclick="loadReleased()" title="Refresh"><i class="bi bi-arrow-clockwise"></i></button>
         </div>
-        <!-- Table -->
         <div class="table-responsive">
-          <table class="table table-sm table-hover mb-0 align-middle" id="device-table">
+          <table class="table table-sm table-hover mb-0 align-middle">
             <thead class="table-light">
               <tr>
-                <th>MAC</th>
-                <th>TID / PID</th>
-                <th>Device ID</th>
-                <th>MQTT User</th>
-                <th>MQTT Pass</th>
-                <th>HW Config</th>
-                <th>Registered</th>
-                <th>Status</th>
-                <th></th>
+                <th>Tenant (TID)</th><th>PID</th><th>Product</th><th>Version</th>
+                <th>Content hash</th><th>Published</th><th>Inventory</th><th></th>
               </tr>
             </thead>
-            <tbody id="device-tbody">
-              <tr><td colspan="9" class="text-center text-muted py-5">Loading…</td></tr>
+            <tbody id="released-tbody">
+              <tr><td colspan="8" class="text-center text-muted py-5">Loading…</td></tr>
             </tbody>
           </table>
         </div>
       </div>
     </div>
 
-    <!-- ── Add Device tab ─────────────────────────────────────────────────── -->
-    <div class="tab-pane fade" id="tab-add">
+    <!-- ── Add Inventory tab ──────────────────────────────────────────────── -->
+    <div class="tab-pane fade" id="tab-addinv">
       <div class="row justify-content-center pt-2">
-        <div class="col-xl-5 col-lg-7">
+        <div class="col-xl-7 col-lg-9">
           <div class="card">
             <div class="card-header bg-white fw-semibold py-3">
-              <i class="bi bi-plus-circle me-2 text-primary"></i>Add Device to Inventory
+              <i class="bi bi-plus-square me-2 text-primary"></i>Add inventory batch
             </div>
             <div class="card-body p-4">
-              <form id="add-form" novalidate>
+              <div id="addinv-empty" class="alert alert-secondary small mb-0">
+                Pick a released product from the <a href="#" onclick="document.querySelector('[data-bs-target=&quot;#tab-released&quot;]').click();return false">Released Products</a> tab and click <strong>Add inventory</strong>.
+              </div>
+              <div id="addinv-form" class="d-none">
+                <div class="alert alert-info d-flex flex-wrap gap-3 small py-2" id="addinv-context"></div>
 
-                <!-- MAC -->
                 <div class="mb-3">
-                  <label class="form-label fw-semibold small">MAC Address <span class="text-danger">*</span></label>
-                  <input type="text" class="form-control mono" id="add-mac"
-                         placeholder="AA:BB:CC:DD:EE:FF" required autocomplete="off">
-                  <div class="form-text">Colons and dashes are stripped automatically.</div>
+                  <label class="form-label fw-semibold small d-block">Seeding mode</label>
+                  <div class="btn-group" role="group">
+                    <input type="radio" class="btn-check" name="seedmode" id="mode-csv" value="csv" checked onchange="switchSeedMode()">
+                    <label class="btn btn-sm btn-outline-primary" for="mode-csv"><i class="bi bi-upc-scan me-1"></i>Upload MAC list (CSV)</label>
+                    <input type="radio" class="btn-check" name="seedmode" id="mode-manual" value="manual" onchange="switchSeedMode()">
+                    <label class="btn btn-sm btn-outline-primary" for="mode-manual"><i class="bi bi-keyboard me-1"></i>Enter MACs manually</label>
+                    <input type="radio" class="btn-check" name="seedmode" id="mode-qty" value="qty" onchange="switchSeedMode()">
+                    <label class="btn btn-sm btn-outline-primary" for="mode-qty"><i class="bi bi-123 me-1"></i>Reserve by quantity</label>
+                  </div>
                 </div>
 
-                <!-- TID -->
+                <div id="seed-csv" class="mb-3">
+                  <div class="drop-zone" id="inv-drop-zone"
+                       onclick="document.getElementById('inv-csv-file').click()"
+                       ondragover="event.preventDefault();this.classList.add('over')"
+                       ondragleave="this.classList.remove('over')"
+                       ondrop="handleInvDrop(event)">
+                    <i class="bi bi-file-earmark-arrow-up fs-3 text-muted d-block mb-1"></i>
+                    <strong>Click to browse</strong> or drop a CSV with a <code>mac</code> column
+                  </div>
+                  <input type="file" id="inv-csv-file" accept=".csv,text/csv" class="d-none" onchange="previewInvCSV(this.files[0])">
+                  <div id="inv-csv-summary" class="form-text mt-1"></div>
+                </div>
+
+                <div id="seed-manual" class="mb-3 d-none">
+                  <label class="form-label fw-semibold small">MAC addresses</label>
+                  <textarea class="form-control mono" id="inv-manual" rows="6"
+                            placeholder="AA:BB:CC:DD:EE:01&#10;AA-BB-CC-DD-EE-02&#10;aabbccddee03"
+                            oninput="parseManualMacs()"></textarea>
+                  <div class="form-text">One per line (or comma / space separated). Colons and dashes are stripped automatically.</div>
+                  <div id="inv-manual-summary" class="form-text mt-1"></div>
+                </div>
+
+                <div id="seed-qty" class="mb-3 d-none">
+                  <label class="form-label fw-semibold small">Quantity (DIDs reserved now, MAC bound later at provision)</label>
+                  <input type="number" min="1" class="form-control" style="max-width:160px" id="inv-qty" value="10">
+                </div>
+
                 <div class="mb-3">
-                  <label class="form-label fw-semibold small">Tenant ID (TID)</label>
-                  <input type="text" class="form-control mono" id="add-tid" value="setu" required>
+                  <label class="form-label fw-semibold small">Integrator note <span class="text-muted">(optional)</span></label>
+                  <input type="text" class="form-control" id="inv-note" placeholder="e.g. customer / PO reference">
                 </div>
 
-                <!-- PID -->
-                <div class="mb-3">
-                  <label class="form-label fw-semibold small">Product ID (PID) <span class="text-danger">*</span></label>
-                  <select class="form-select form-select-sm mb-2" id="pid-preset" onchange="applyPIDPreset()">
-                    <option value="">— choose product type —</option>
-                    <option value="sp1">sp1 · Smart Plug</option>
-                    <option value="light1">light1 · Light / Dimmer</option>
-                    <option value="th1">th1 · Thermostat / Climate</option>
-                    <option value="gen1">gen1 · Generic</option>
-                    <option value="_custom">Custom…</option>
-                  </select>
-                  <input type="text" class="form-control mono" id="add-pid" placeholder="e.g. sp1" required>
-                </div>
-
-                <!-- HW Config -->
-                <div class="mb-4">
-                  <label class="form-label fw-semibold small">HW Config (JSON)</label>
-                  <select class="form-select form-select-sm mb-2" id="hw-preset" onchange="applyHWPreset()">
-                    <option value="empty">Empty — {}</option>
-                    <option value="plug">Smart Plug — relay + button</option>
-                    <option value="dimmer">Dimmer — relay + PWM</option>
-                    <option value="rgb">RGB Light — relay + PWM + RGB</option>
-                    <option value="climate">Climate — relay + sensor</option>
-                  </select>
-                  <textarea class="form-control mono" id="add-hw" rows="9"
-                            style="font-size:.78rem">{}</textarea>
-                  <div class="form-text">GPIO/DP mapping written to device NVS during hw_prov.</div>
-                </div>
-
-                <button type="submit" class="btn btn-primary w-100 py-2">
-                  <i class="bi bi-plus-circle me-1"></i>Add to Inventory
+                <button class="btn btn-primary" id="inv-submit" onclick="submitInventoryBatch()">
+                  <i class="bi bi-plus-circle me-1"></i>Seed batch
                 </button>
-              </form>
-
-              <!-- Result -->
-              <div id="add-result" class="mt-3 d-none"></div>
+              </div>
+              <div id="addinv-result" class="mt-3 d-none"></div>
             </div>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- ── Bulk Import tab ────────────────────────────────────────────────── -->
-    <div class="tab-pane fade" id="tab-import">
-      <div class="row g-3 pt-2">
-
-        <!-- Left: format guide -->
-        <div class="col-lg-3">
-          <div class="card h-100">
-            <div class="card-header bg-white fw-semibold py-3">CSV Format</div>
-            <div class="card-body">
-              <table class="table table-sm table-bordered small mb-3">
-                <thead class="table-light">
-                  <tr><th>Column</th><th>Req.</th><th>Notes</th></tr>
-                </thead>
-                <tbody>
-                  <tr>
-                    <td class="mono">mac</td>
-                    <td><i class="bi bi-check-circle-fill text-success"></i></td>
-                    <td>12 hex chars</td>
-                  </tr>
-                  <tr>
-                    <td class="mono">pid</td>
-                    <td><i class="bi bi-check-circle-fill text-success"></i></td>
-                    <td>e.g. sp1</td>
-                  </tr>
-                  <tr>
-                    <td class="mono">hw_config</td>
-                    <td><i class="bi bi-dash text-muted"></i></td>
-                    <td>JSON, default {}</td>
-                  </tr>
-                  <tr>
-                    <td class="mono">tid</td>
-                    <td><i class="bi bi-dash text-muted"></i></td>
-                    <td>default: server TID</td>
-                  </tr>
-                </tbody>
-              </table>
-              <p class="small fw-semibold text-muted mb-1">Example</p>
-              <pre class="bg-light p-2 rounded small mb-3" style="font-size:.73rem">mac,pid,hw_config
-aabbccddeeff,sp1,{}
-112233445566,light1,{}
-aabbccddee03,th1,{}</pre>
-              <button class="btn btn-sm btn-outline-secondary w-100" onclick="downloadTemplate()">
-                <i class="bi bi-download me-1"></i>Download Template
-              </button>
-            </div>
-          </div>
+    <!-- ── Inventory dashboard tab ────────────────────────────────────────── -->
+    <div class="tab-pane fade" id="tab-invdash">
+      <div class="card rounded-top-0">
+        <div class="card-header bg-white d-flex align-items-center gap-2 py-2 flex-wrap">
+          <input class="form-control form-control-sm" style="max-width:170px" id="inv-f-tid" placeholder="TID…" oninput="loadInvDash()">
+          <input class="form-control form-control-sm" style="max-width:150px" id="inv-f-pid" placeholder="PID…" oninput="loadInvDash()">
+          <select class="form-select form-select-sm w-auto" id="inv-f-status" onchange="loadInvDash()">
+            <option value="">All status</option>
+            <option value="inventory">inventory</option>
+            <option value="provisioned">provisioned</option>
+            <option value="activated">activated</option>
+            <option value="claimed">claimed</option>
+            <option value="retired">retired</option>
+          </select>
+          <select class="form-select form-select-sm w-auto" id="inv-f-batch" onchange="loadInvDash()">
+            <option value="">All batches</option>
+          </select>
+          <button class="btn btn-sm btn-outline-secondary ms-auto" onclick="loadInvDash()" title="Refresh"><i class="bi bi-arrow-clockwise"></i></button>
         </div>
-
-        <!-- Right: upload + results -->
-        <div class="col-lg-9">
-          <div class="card mb-3">
-            <div class="card-header bg-white fw-semibold py-3">Upload CSV</div>
-            <div class="card-body">
-              <div class="drop-zone" id="drop-zone"
-                   onclick="document.getElementById('csv-file').click()"
-                   ondragover="event.preventDefault();this.classList.add('over')"
-                   ondragleave="this.classList.remove('over')"
-                   ondrop="handleDrop(event)">
-                <i class="bi bi-file-earmark-arrow-up fs-1 text-muted d-block mb-2"></i>
-                <strong>Click to browse</strong> or drag &amp; drop a CSV file here
-                <div class="text-muted small mt-1">UTF-8, max 10 MB</div>
-              </div>
-              <input type="file" id="csv-file" accept=".csv,text/csv"
-                     class="d-none" onchange="previewCSV(this.files[0])">
-
-              <!-- Preview -->
-              <div id="csv-preview" class="mt-3 d-none">
-                <div class="d-flex align-items-center mb-2 gap-2">
-                  <span class="fw-semibold small" id="preview-label"></span>
-                  <button class="btn btn-sm btn-primary ms-auto px-3" id="import-btn" onclick="submitCSV()">
-                    <i class="bi bi-upload me-1"></i>Import All
-                  </button>
-                  <button class="btn btn-sm btn-outline-secondary" onclick="clearCSV()">Clear</button>
-                </div>
-                <div class="table-responsive border rounded" style="max-height:260px;overflow-y:auto;">
-                  <table class="table table-sm table-bordered mb-0 small">
-                    <thead class="table-light sticky-top">
-                      <tr id="preview-head"></tr>
-                    </thead>
-                    <tbody id="preview-body"></tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Import results -->
-          <div class="card d-none" id="results-card">
-            <div class="card-header bg-white fw-semibold py-3 d-flex align-items-center">
-              Import Results
-              <span class="ms-2 small text-muted" id="results-summary"></span>
-            </div>
-            <div class="table-responsive" style="max-height:380px;overflow-y:auto;">
-              <table class="table table-sm mb-0 align-middle">
-                <thead class="table-light sticky-top">
-                  <tr>
-                    <th>MAC</th><th>Status</th><th>Device ID</th>
-                    <th>MQTT User</th><th>MQTT Pass</th><th>EMQX</th><th>Error</th>
-                  </tr>
-                </thead>
-                <tbody id="results-body"></tbody>
-              </table>
-            </div>
-          </div>
+        <div class="card-body py-2 border-bottom" id="inv-counts"><span class="text-muted small">Loading…</span></div>
+        <div class="table-responsive">
+          <table class="table table-sm table-hover mb-0 align-middle">
+            <thead class="table-light">
+              <tr>
+                <th>MAC</th><th>Device ID</th><th>TID / PID</th><th>Schema</th>
+                <th>Status</th><th>Batch</th><th>MQTT User</th><th>Provisioned</th><th>Registered</th><th>ZTP</th>
+              </tr>
+            </thead>
+            <tbody id="invdash-tbody"><tr><td colspan="10" class="text-center text-muted py-5">Loading…</td></tr></tbody>
+          </table>
         </div>
-
+      </div>
+      <div class="card mt-3">
+        <div class="card-header bg-white fw-semibold py-2"><i class="bi bi-layers me-1"></i>Batch history</div>
+        <div class="table-responsive">
+          <table class="table table-sm table-hover mb-0 align-middle">
+            <thead class="table-light">
+              <tr><th>Batch</th><th>TID / PID</th><th>Schema</th><th>Qty</th><th>Seeded</th><th>Note</th><th>By</th><th>Created</th></tr>
+            </thead>
+            <tbody id="batches-tbody"><tr><td colspan="8" class="text-center text-muted py-4">Loading…</td></tr></tbody>
+          </table>
+        </div>
       </div>
     </div>
 
@@ -441,6 +367,57 @@ aabbccddee03,th1,{}</pre>
   </div>
 </div>
 
+<!-- Released-product schema drill-in modal -->
+<div class="modal fade" id="schema-modal" tabindex="-1">
+  <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h6 class="modal-title">Unified DP schema — <span id="schema-modal-title" class="mono"></span></h6>
+        <button class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body p-0">
+        <div class="p-3 border-bottom bg-light">
+          <div class="d-flex align-items-center mb-2">
+            <span class="fw-semibold small"><i class="bi bi-cpu me-1"></i>Firmware <code>hw_config</code> <span class="text-muted">(projected — what a provisioned device receives)</span></span>
+            <button class="btn btn-sm btn-outline-secondary ms-auto py-0" onclick="cp(document.getElementById('schema-modal-hw').textContent)"><i class="bi bi-copy"></i> Copy</button>
+          </div>
+          <pre class="m-0 p-2 bg-white border rounded small" id="schema-modal-hw" style="max-height:200px;overflow-y:auto;font-size:.78rem;"></pre>
+        </div>
+        <div class="table-responsive">
+          <table class="table table-sm mb-0 align-middle">
+            <thead class="table-light">
+              <tr>
+                <th>DP</th><th>Code</th><th>Name</th>
+                <th>Semantic (type · mode · range · unit)</th>
+                <th>Hardware (actuation · pins)</th>
+              </tr>
+            </thead>
+            <tbody id="schema-modal-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ZTP provision-bundle preview modal -->
+<div class="modal fade" id="ztp-modal" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h6 class="modal-title"><i class="bi bi-cpu me-1"></i>ZTP provision bundle — <span id="ztp-modal-did" class="mono"></span></h6>
+        <button class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-secondary small py-2">
+          Read-only preview of the exact <code>/factory/provision</code> response this device receives and burns into flash. Viewing this does <strong>not</strong> provision the device.
+        </div>
+        <div id="ztp-modal-body"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Toast -->
 <div class="position-fixed bottom-0 end-0 p-3" style="z-index:9999">
   <div id="toast" class="toast align-items-center border-0" role="alert" aria-live="assertive">
@@ -460,6 +437,8 @@ const toastEl   = document.getElementById('toast');
 const bsToast   = new bootstrap.Toast(toastEl, { delay: 3500 });
 const bsDelModal = new bootstrap.Modal(document.getElementById('del-modal'));
 const bsHwModal  = new bootstrap.Modal(document.getElementById('hw-modal'));
+const bsSchemaModal = new bootstrap.Modal(document.getElementById('schema-modal'));
+const bsZtpModal = new bootstrap.Modal(document.getElementById('ztp-modal'));
 
 // ── Global state ─────────────────────────────────────────────────────────────
 let allDevices = [];
@@ -648,7 +627,7 @@ function applyPIDPreset() {
   }
 }
 
-document.getElementById('add-form').addEventListener('submit', async e => {
+document.getElementById('add-form')?.addEventListener('submit', async e => {
   e.preventDefault();
   const mac = document.getElementById('add-mac').value;
   const tid = document.getElementById('add-tid').value;
@@ -1036,6 +1015,438 @@ function confirmStatusChange(mac, provisioned) {
   bsDelModal.show();
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+//  Released products + cloud-backed inventory (proxied to setu-cloud /admin/*)
+// ════════════════════════════════════════════════════════════════════════════
+
+let releasedRows = [];      // raw rows from /api/released-products
+let invCountsByProduct = {}; // "tid|pid" -> counts{}
+let addInvSel = null;        // {tid, pid, version, name} selected for Add Inventory
+let invMacs = [];            // parsed MACs for the CSV seeding mode
+
+const fmtDate = ts => ts ? new Date(ts).toLocaleString('en-GB',
+  { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' }) : '—';
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+// status → bootstrap badge colour
+function invBadge(status) {
+  const cls = { inventory:'secondary', provisioned:'info', activated:'primary',
+                claimed:'success', retired:'dark' }[status] || 'secondary';
+  return `<span class="badge bg-${cls}">${esc(status)}</span>`;
+}
+
+// Parse a release row's schema_json (may arrive as object or string).
+function parseSchema(row) {
+  try { return typeof row.schema_json === 'string' ? JSON.parse(row.schema_json) : row.schema_json; }
+  catch { return null; }
+}
+
+// ── Released Products tab ─────────────────────────────────────────────────────
+async function loadReleased() {
+  document.getElementById('released-tbody').innerHTML =
+    `<tr><td colspan="8" class="text-center text-muted py-5">Loading…</td></tr>`;
+  try {
+    const [rels, inv] = await Promise.all([
+      api('GET', '/api/released-products'),
+      api('GET', '/api/inventory'),
+    ]);
+    releasedRows = rels || [];
+    // Bucket inventory counts per (tid,pid) from the full device list.
+    invCountsByProduct = {};
+    for (const d of (inv.devices || [])) {
+      const k = d.tid + '|' + d.pid;
+      (invCountsByProduct[k] ||= {})[d.status] = (invCountsByProduct[k]?.[d.status] || 0) + 1;
+    }
+    renderReleased();
+  } catch (e) {
+    document.getElementById('released-tbody').innerHTML =
+      `<tr><td colspan="8" class="text-center text-danger py-5">${esc(e.message)}</td></tr>`;
+  }
+}
+
+function renderReleased() {
+  const ftid = document.getElementById('rel-tid').value.toLowerCase();
+  const fpid = document.getElementById('rel-pid').value.toLowerCase();
+  const rows = releasedRows.filter(r =>
+    (!ftid || r.tid.toLowerCase().includes(ftid)) &&
+    (!fpid || r.pid.toLowerCase().includes(fpid)));
+
+  const tbody = document.getElementById('released-tbody');
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="8" class="text-center text-muted py-5">No released products. Release a product in the dev portal — it appears here instantly.</td></tr>`;
+    return;
+  }
+  // Sort TID → PID → version desc.
+  rows.sort((a,b) => a.tid.localeCompare(b.tid) || a.pid.localeCompare(b.pid) || b.version - a.version);
+
+  tbody.innerHTML = rows.map(r => {
+    const art = parseSchema(r) || {};
+    const name = art.name || r.pid;
+    const counts = invCountsByProduct[r.tid + '|' + r.pid] || {};
+    const countBadges = Object.keys(counts).length
+      ? Object.entries(counts).map(([s,n]) => `<span class="badge bg-light text-dark border me-1">${esc(s)}: ${n}</span>`).join('')
+      : '<span class="text-muted small">none</span>';
+    const hashShort = (r.content_hash || '').replace('sha256:','').slice(0,12);
+    const retired = !!r.retired_at;
+    const retiredBadge = retired ? ` <span class="badge bg-dark" title="Retired ${fmtDate(r.retired_at)}">retired</span>` : '';
+    const toggleBtn = retired
+      ? `<button class="btn btn-sm btn-outline-success" title="Restore (un-retire)"
+                 onclick="retireRelease('${r.tid}','${r.pid}',${r.version},false)"><i class="bi bi-arrow-counterclockwise"></i></button>`
+      : `<button class="btn btn-sm btn-outline-warning" title="Retire / archive"
+                 onclick="retireRelease('${r.tid}','${r.pid}',${r.version},true)"><i class="bi bi-archive"></i></button>`;
+    return `<tr class="${retired ? 'opacity-50' : ''}">
+      <td><span class="badge bg-secondary mono">${esc(r.tid)}</span></td>
+      <td class="mono">${esc(r.pid)} ${cpBtn(r.pid,'Copy PID')}</td>
+      <td>${esc(name)}</td>
+      <td><span class="badge bg-primary">v${r.version}</span>${retiredBadge}</td>
+      <td class="mono small text-muted" title="${esc(r.content_hash)}">${hashShort}… ${cpBtn(r.content_hash,'Copy hash')}</td>
+      <td class="text-muted small">${fmtDate(r.published_at)}</td>
+      <td>${countBadges}</td>
+      <td class="text-nowrap">
+        <button class="btn btn-sm btn-outline-secondary" title="View DP schema"
+                onclick="showSchema('${r.tid}','${r.pid}',${r.version})"><i class="bi bi-diagram-3"></i></button>
+        <button class="btn btn-sm btn-outline-primary" title="Add inventory"
+                onclick="initAddInv('${r.tid}','${r.pid}',${r.version})"><i class="bi bi-plus-circle"></i></button>
+        ${toggleBtn}
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+// Staff toggle a release's soft-retire flag (archive / restore).
+async function retireRelease(tid, pid, version, retired) {
+  if (retired && !confirm(`Retire ${pid} v${version}? It will be archived (kept for audit). Devices keep working; you can restore it later.`)) return;
+  try {
+    await api('POST', '/api/released-products/retire', { tid, pid, version, retired });
+    toast(retired ? `Retired ${pid} v${version}` : `Restored ${pid} v${version}`);
+    loadReleased();
+  } catch (e) { toast(e.message, 'danger'); }
+}
+
+// Project the unified DP schema to the firmware hw_config the device receives
+// (Shared contract B): {"config":{"dps":{ "<dp_id>": {type, gpio, active_high,
+// freq_hz, resolution} }}}, actuated DPs only. Mirrors cloud schema.FirmwareConfig.
+function firmwareConfig(art) {
+  const dps = {};
+  for (const dp of (art.dps || [])) {
+    const h = dp.hardware || {};
+    if (!h.actuation || h.actuation === 'none') continue;
+    const e = { type: h.actuation };
+    if (h.actuation === 'rgb') {
+      if (h.gpio_r != null) e.gpio_r = h.gpio_r;
+      if (h.gpio_g != null) e.gpio_g = h.gpio_g;
+      if (h.gpio_b != null) e.gpio_b = h.gpio_b;
+    } else if (h.gpio != null) {
+      e.gpio = h.gpio;
+    }
+    if (h.active_high != null) e.active_high = h.active_high;
+    if (h.freq_hz != null) e.freq_hz = h.freq_hz;
+    if (h.resolution != null) e.resolution = h.resolution;
+    dps[String(dp.dp_id)] = e;
+  }
+  return { config: { dps } };
+}
+
+function showSchema(tid, pid, version) {
+  const row = releasedRows.find(r => r.tid===tid && r.pid===pid && r.version===version);
+  const art = row && parseSchema(row);
+  document.getElementById('schema-modal-title').textContent = `${pid} · v${version}`;
+  const body = document.getElementById('schema-modal-body');
+  const hwEl = document.getElementById('schema-modal-hw');
+  if (!art || !Array.isArray(art.dps)) {
+    hwEl.textContent = '{}';
+    body.innerHTML = `<tr><td class="text-muted p-3">No schema</td></tr>`; bsSchemaModal.show(); return;
+  }
+  hwEl.textContent = JSON.stringify(firmwareConfig(art), null, 2);
+  body.innerHTML = art.dps.map(dp => {
+    const s = dp.semantic || {}, h = dp.hardware || {};
+    const sem = [s.type, s.mode,
+      (s.min!=null||s.max!=null) ? `${s.min ?? ''}–${s.max ?? ''}` : null,
+      s.unit, (s.enum_values||[]).join('/')].filter(Boolean).join(' · ');
+    const hw = (!h.actuation || h.actuation==='none') ? '<span class="text-muted">none</span>'
+      : [`<strong>${esc(h.actuation)}</strong>`,
+         h.gpio!=null?`gpio ${h.gpio}`:null,
+         h.active_high!=null?`active_${h.active_high?'high':'low'}`:null,
+         h.freq_hz?`${h.freq_hz}Hz`:null, h.resolution?`${h.resolution}bit`:null
+        ].filter(Boolean).join(' · ');
+    return `<tr>
+      <td><span class="badge bg-light text-dark border">${dp.dp_id}</span></td>
+      <td class="mono small">${esc(dp.code)}</td>
+      <td class="small">${esc(dp.name)}</td>
+      <td class="small">${esc(sem)}</td>
+      <td class="small">${hw}</td>
+    </tr>`;
+  }).join('');
+  bsSchemaModal.show();
+}
+
+// ── Add Inventory tab ─────────────────────────────────────────────────────────
+function initAddInv(tid, pid, version) {
+  const row = releasedRows.find(r => r.tid===tid && r.pid===pid && r.version===version);
+  const art = row && parseSchema(row);
+  addInvSel = { tid, pid, version, name: (art && art.name) || pid };
+  invMacs = [];
+  document.getElementById('addinv-empty').classList.add('d-none');
+  document.getElementById('addinv-form').classList.remove('d-none');
+  document.getElementById('addinv-result').classList.add('d-none');
+  document.getElementById('inv-csv-summary').textContent = '';
+  document.getElementById('inv-manual').value = '';
+  document.getElementById('inv-manual-summary').textContent = '';
+  document.getElementById('inv-note').value = '';
+  document.getElementById('mode-csv').checked = true;
+  switchSeedMode();
+  document.getElementById('addinv-context').innerHTML =
+    `<span><span class="text-muted">Tenant:</span> <span class="badge bg-secondary mono">${esc(tid)}</span></span>
+     <span><span class="text-muted">PID:</span> <span class="mono">${esc(pid)}</span></span>
+     <span><span class="text-muted">Product:</span> ${esc(addInvSel.name)}</span>
+     <span><span class="text-muted">Schema:</span> <span class="badge bg-primary">v${version}</span></span>`;
+  // Activate the Add Inventory tab.
+  bootstrap.Tab.getOrCreateInstance(document.querySelector('[data-bs-target="#tab-addinv"]')).show();
+}
+
+function seedMode() { return document.querySelector('input[name=seedmode]:checked').value; }
+
+function switchSeedMode() {
+  const mode = seedMode();
+  document.getElementById('seed-csv').classList.toggle('d-none', mode !== 'csv');
+  document.getElementById('seed-manual').classList.toggle('d-none', mode !== 'manual');
+  document.getElementById('seed-qty').classList.toggle('d-none', mode !== 'qty');
+}
+
+// Normalize a free-form MAC list (lines, commas or spaces) to unique 12-hex MACs.
+function normMacList(text) {
+  const out = [];
+  for (const tok of (text || '').split(/[\s,]+/)) {
+    const m = tok.toLowerCase().replace(/[:\-]/g, '');
+    if (/^[0-9a-f]{12}$/.test(m)) out.push(m);
+  }
+  return [...new Set(out)];
+}
+
+function parseManualMacs() {
+  invMacs = normMacList(document.getElementById('inv-manual').value);
+  document.getElementById('inv-manual-summary').innerHTML = invMacs.length
+    ? `<span class="text-success"><i class="bi bi-check-circle me-1"></i>${invMacs.length} valid MAC${invMacs.length!==1?'s':''}</span>`
+    : `<span class="text-muted">No valid 12-hex MACs yet</span>`;
+}
+
+function handleInvDrop(e) {
+  e.preventDefault();
+  e.currentTarget.classList.remove('over');
+  if (e.dataTransfer.files.length) previewInvCSV(e.dataTransfer.files[0]);
+}
+
+function previewInvCSV(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    const lines = ev.target.result.split('\n').map(l => l.trim()).filter(Boolean);
+    if (!lines.length) { toast('Empty CSV', 'warning'); return; }
+    // Find the mac column (header) or treat the single column as MACs.
+    const header = lines[0].split(',').map(h => h.trim().toLowerCase());
+    let macIdx = header.indexOf('mac');
+    let dataLines = lines;
+    if (macIdx >= 0) dataLines = lines.slice(1); else macIdx = 0;
+    invMacs = [];
+    for (const l of dataLines) {
+      const raw = l.split(',')[macIdx] || '';
+      const mac = raw.toLowerCase().replace(/[:\-\s]/g, '');
+      if (/^[0-9a-f]{12}$/.test(mac)) invMacs.push(mac);
+    }
+    invMacs = [...new Set(invMacs)];
+    document.getElementById('inv-csv-summary').innerHTML = invMacs.length
+      ? `<span class="text-success"><i class="bi bi-check-circle me-1"></i>${invMacs.length} valid MAC${invMacs.length!==1?'s':''} ready</span>`
+      : `<span class="text-danger">No valid 12-hex MACs found (expected a <code>mac</code> column)</span>`;
+  };
+  reader.readAsText(file);
+}
+
+async function submitInventoryBatch() {
+  if (!addInvSel) return;
+  const mode = seedMode();
+  const body = { tid: addInvSel.tid, pid: addInvSel.pid, schema_version: addInvSel.version,
+                 integrator_note: document.getElementById('inv-note').value.trim() };
+  if (mode === 'qty') {
+    const qty = parseInt(document.getElementById('inv-qty').value, 10);
+    if (!qty || qty < 1) { toast('Enter a quantity ≥ 1', 'warning'); return; }
+    body.qty = qty;
+  } else {
+    // csv mode uses invMacs (from previewInvCSV); manual mode re-parses the textarea.
+    const macs = mode === 'manual' ? normMacList(document.getElementById('inv-manual').value) : invMacs;
+    if (!macs.length) { toast('Add at least one valid MAC address', 'warning'); return; }
+    body.macs = macs;
+  }
+  const btn = document.getElementById('inv-submit');
+  btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Seeding…';
+  try {
+    const res = await api('POST', '/api/inventory/batches', body);
+    renderBatchResult(res);
+    toast(`Batch seeded: ${res.count} device${res.count!==1?'s':''}`);
+  } catch (e) {
+    const el = document.getElementById('addinv-result');
+    el.className = 'mt-3';
+    el.innerHTML = `<div class="alert alert-danger mb-0"><i class="bi bi-x-circle-fill me-1"></i>${esc(e.message)}</div>`;
+    toast(e.message, 'danger');
+  } finally {
+    btn.disabled = false; btn.innerHTML = '<i class="bi bi-plus-circle me-1"></i>Seed batch';
+  }
+}
+
+let lastBatch = null;
+function renderBatchResult(res) {
+  lastBatch = res;
+  const el = document.getElementById('addinv-result');
+  el.className = 'mt-3';
+  const rows = (res.devices || []).map(d => `<tr>
+    <td class="mono small">${d.did.slice(0,8)}… ${cpBtn(d.did,'Copy DID')}</td>
+    <td class="mono small">${d.mac || '<span class=\"text-muted\">reserved</span>'}</td>
+    <td class="mono small">${esc(d.mq_user)} ${cpBtn(d.mq_user)}</td>
+    <td class="mono small"><span class="secret" title="Click to reveal">${esc(d.mq_pass)}</span> ${cpBtn(d.mq_pass,'Copy password')}</td>
+    <td>${invBadge(d.status)}</td>
+  </tr>`).join('');
+  el.innerHTML = `
+    <div class="alert alert-success mb-2">
+      <div class="d-flex align-items-center flex-wrap gap-2">
+        <span class="fw-semibold"><i class="bi bi-check-circle-fill me-1"></i>Batch ${res.batch_id.slice(0,8)}… seeded —
+          ${res.count} device${res.count!==1?'s':''}${res.reserved ? ` (${res.reserved} reserved)` : ''}</span>
+        <button class="btn btn-sm btn-dark ms-auto" onclick="exportBatchCSV()"><i class="bi bi-download me-1"></i>Export CSV for flashing</button>
+      </div>
+      <div class="small text-danger mt-1"><i class="bi bi-exclamation-triangle me-1"></i>MQTT passwords are shown only now — export the CSV for the flashing station.</div>
+    </div>
+    <div class="table-responsive border rounded">
+      <table class="table table-sm table-hover mb-0 align-middle">
+        <thead class="table-light"><tr><th>DID</th><th>MAC</th><th>MQTT User</th><th>MQTT Pass</th><th>Status</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+  el.classList.remove('d-none');
+  loadInvDash();
+}
+
+function exportBatchCSV() {
+  if (!lastBatch) return;
+  const head = 'did,mac,mq_user,mq_pass,status\n';
+  const body = (lastBatch.devices || []).map(d =>
+    [d.did, d.mac || '', d.mq_user, d.mq_pass, d.status].join(',')).join('\n');
+  const a = Object.assign(document.createElement('a'), {
+    href: URL.createObjectURL(new Blob([head + body], { type: 'text/csv' })),
+    download: `batch_${lastBatch.batch_id.slice(0,8)}.csv`,
+  });
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// ── Inventory dashboard tab ───────────────────────────────────────────────────
+async function loadInvDash() {
+  const tid = document.getElementById('inv-f-tid').value.trim();
+  const pid = document.getElementById('inv-f-pid').value.trim();
+  const status = document.getElementById('inv-f-status').value;
+  const batch = document.getElementById('inv-f-batch').value;
+  const qs = new URLSearchParams({ tid, pid, status, batch }).toString();
+  try {
+    const [inv, batches] = await Promise.all([
+      api('GET', '/api/inventory?' + qs),
+      api('GET', '/api/batches?' + new URLSearchParams({ tid, pid }).toString()),
+    ]);
+    renderInvCounts(inv.counts || {}, inv.total || 0);
+    renderInvDevices(inv.devices || []);
+    renderBatches(batches || []);
+    populateBatchFilter(batches || [], batch);
+  } catch (e) {
+    document.getElementById('invdash-tbody').innerHTML =
+      `<tr><td colspan="9" class="text-center text-danger py-5">${esc(e.message)}</td></tr>`;
+  }
+}
+
+function renderInvCounts(counts, total) {
+  const order = ['inventory','provisioned','activated','claimed','retired'];
+  const seen = new Set(order);
+  const badges = order.filter(s => counts[s]).map(s => `${invBadge(s)} <span class="fw-semibold">${counts[s]}</span>`);
+  Object.keys(counts).filter(s => !seen.has(s)).forEach(s => badges.push(`${invBadge(s)} <span class="fw-semibold">${counts[s]}</span>`));
+  document.getElementById('inv-counts').innerHTML =
+    `<div class="d-flex flex-wrap gap-3 align-items-center small">
+       <span class="text-muted">Total <strong>${total}</strong></span>${badges.map(b=>`<span>${b}</span>`).join('')}
+     </div>`;
+}
+
+function renderInvDevices(devices) {
+  const tbody = document.getElementById('invdash-tbody');
+  if (!devices.length) { tbody.innerHTML = `<tr><td colspan="10" class="text-center text-muted py-5">No devices</td></tr>`; return; }
+  tbody.innerHTML = devices.map(d => `<tr>
+    <td class="mono small">${d.mac || '<span class=\"text-muted\">—</span>'}</td>
+    <td class="mono small text-muted">${d.did.slice(0,8)}… ${cpBtn(d.did,'Copy DID')}</td>
+    <td><span class="badge bg-secondary me-1">${esc(d.tid)}</span><span class="badge bg-primary">${esc(d.pid)}</span></td>
+    <td>${d.schema_version!=null ? `v${d.schema_version}` : '<span class="text-muted">—</span>'}</td>
+    <td>${invBadge(d.status)}</td>
+    <td class="mono small text-muted">${d.batch_id ? d.batch_id.slice(0,8)+'…' : '—'}</td>
+    <td class="mono small">${esc(d.mq_user)}</td>
+    <td class="text-muted small">${fmtDate(d.provisioned_at)}</td>
+    <td class="text-muted small">${fmtDate(d.registered_at)}</td>
+    <td><button class="btn btn-sm btn-outline-secondary" title="View ZTP provision bundle"
+               onclick="showZTP('${d.did}')"><i class="bi bi-cpu"></i></button></td>
+  </tr>`).join('');
+}
+
+// Read-only preview of the ZTP /factory/provision bundle this device receives.
+async function showZTP(did) {
+  document.getElementById('ztp-modal-did').textContent = did.slice(0,8) + '…';
+  const body = document.getElementById('ztp-modal-body');
+  body.innerHTML = `<div class="text-muted small py-3">Loading…</div>`;
+  bsZtpModal.show();
+  try {
+    const z = await api('GET', `/api/inventory/${did}/ztp`);
+    const row = (k, v, mono = true) => `<tr><th class="text-nowrap pe-3" style="width:140px">${k}</th><td class="${mono ? 'mono' : ''} small" style="word-break:break-all">${v}</td></tr>`;
+    const hw = JSON.stringify(z.hw_config, null, 2);
+    body.innerHTML = `
+      <table class="table table-sm mb-2">
+        ${row('did', esc(z.did) + ' ' + cpBtn(z.did))}
+        ${row('tid', `<span class="badge bg-secondary mono">${esc(z.tid)}</span>`)}
+        ${row('pid', esc(z.pid))}
+        ${row('mac', z.mac ? esc(z.mac) : '<span class="text-muted">— (bound at provision)</span>')}
+        ${row('status', invBadge(z.status), false)}
+        ${row('schema_version', z.schema_version!=null ? 'v'+z.schema_version : '<span class="text-muted">—</span>', false)}
+        ${row('mq_user', esc(z.mq_user) + ' ' + cpBtn(z.mq_user))}
+        ${row('mq_pass', `<span class="secret" title="click to reveal">${esc(z.mq_pass)}</span> ` + cpBtn(z.mq_pass,'Copy password'))}
+        ${row('mq_uri', esc(z.mq_uri))}
+        ${row('cloud_pubkey', `<span class="secret" title="click to reveal">${esc(z.cloud_pubkey)}</span>`)}
+      </table>
+      <div class="d-flex align-items-center mb-1">
+        <span class="fw-semibold small">hw_config <span class="text-muted">(firmware)</span></span>
+        <button class="btn btn-sm btn-outline-secondary ms-auto py-0" onclick="cp(document.getElementById('ztp-hw').textContent)"><i class="bi bi-copy"></i> Copy</button>
+      </div>
+      <pre class="m-0 p-2 bg-light border rounded small" id="ztp-hw" style="max-height:220px;overflow:auto;font-size:.78rem">${esc(hw)}</pre>`;
+  } catch (e) {
+    body.innerHTML = `<div class="alert alert-danger mb-0">${esc(e.message)}</div>`;
+  }
+}
+
+function renderBatches(batches) {
+  const tbody = document.getElementById('batches-tbody');
+  if (!batches.length) { tbody.innerHTML = `<tr><td colspan="8" class="text-center text-muted py-4">No batches</td></tr>`; return; }
+  tbody.innerHTML = batches.map(b => `<tr style="cursor:pointer" onclick="filterByBatch('${b.id}')">
+    <td class="mono small">${b.id.slice(0,8)}… ${cpBtn(b.id,'Copy batch id')}</td>
+    <td><span class="badge bg-secondary me-1">${esc(b.tid)}</span><span class="badge bg-primary">${esc(b.pid)}</span></td>
+    <td>v${b.schema_version}</td>
+    <td>${b.qty}</td>
+    <td><span class="badge bg-light text-dark border">${b.seeded}</span></td>
+    <td class="small">${esc(b.integrator_note) || '<span class="text-muted">—</span>'}</td>
+    <td class="small text-muted">${esc(b.created_by)}</td>
+    <td class="small text-muted">${fmtDate(b.created_at)}</td>
+  </tr>`).join('');
+}
+
+function populateBatchFilter(batches, selected) {
+  const sel = document.getElementById('inv-f-batch');
+  const opts = ['<option value="">All batches</option>']
+    .concat(batches.map(b => `<option value="${b.id}" ${b.id===selected?'selected':''}>${b.id.slice(0,8)}… (${b.pid} v${b.schema_version})</option>`));
+  sel.innerHTML = opts.join('');
+}
+
+function filterByBatch(id) {
+  document.getElementById('inv-f-batch').value = id;
+  loadInvDash();
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 (async () => {
   try {
@@ -1043,7 +1454,7 @@ function confirmStatusChange(mac, provisioned) {
     currentUsername = me.username;
     document.getElementById('nav-username').textContent = me.username;
   } catch {}
-  loadDevices();
+  loadReleased();
 })();
 </script>
 </body>

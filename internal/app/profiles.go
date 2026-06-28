@@ -3,8 +3,13 @@ package app
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/setucore/setu-cloud/internal/schema"
 )
 
 // Capability describes a single controllable datapoint on a device.
@@ -19,11 +24,12 @@ type Capability struct {
 
 // ProductProfile is the capability profile the app renders the control sheet from.
 type ProductProfile struct {
-	PID          string         `json:"pid"`
-	ConsumerType string         `json:"consumer_type"`
-	Display      ProfileDisplay `json:"display"`
-	Capabilities []Capability   `json:"capabilities"`
-	TileMetric   *TileMetric    `json:"tile_metric,omitempty"`
+	PID           string         `json:"pid"`
+	ConsumerType  string         `json:"consumer_type"`
+	Display       ProfileDisplay `json:"display"`
+	Capabilities  []Capability   `json:"capabilities"`
+	TileMetric    *TileMetric    `json:"tile_metric,omitempty"`
+	SchemaVersion *int           `json:"schema_version,omitempty"`
 }
 
 type ProfileDisplay struct {
@@ -154,16 +160,26 @@ func dpKindsForPID(pid string) map[string]string {
 }
 
 // GetProductProfile handles GET /v1/products/{pid}/profile.
-// Response is static per pid; clients should cache it for the session.
-func GetProductProfile() http.HandlerFunc {
+//
+// The profile is derived from the released schema_version (Shared contract B app
+// projection) for any released PID; ?version= selects a specific version
+// (default: latest). PIDs from the legacy hardcoded catalog still resolve via a
+// fallback so existing consumer devices keep working. The ETag is the schema
+// content hash (or the pid for static profiles) so clients can cache per version.
+func GetProductProfile(db *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		pid := chi.URLParam(r, "pid")
-		prof, ok := productProfiles[pid]
+
+		prof, etag, ok := profileFromReleasedSchema(r, db, pid)
 		if !ok {
-			writeErr(w, 404, "not_found", "unknown product")
-			return
+			static, found := productProfiles[pid]
+			if !found {
+				writeErr(w, 404, "not_found", "unknown product")
+				return
+			}
+			prof, etag = static, `"`+pid+`"`
 		}
-		etag := `"` + pid + `"`
+
 		w.Header().Set("Cache-Control", "max-age=3600")
 		w.Header().Set("ETag", etag)
 		if r.Header.Get("If-None-Match") == etag {
@@ -172,6 +188,57 @@ func GetProductProfile() http.HandlerFunc {
 		}
 		writeJSON(w, 200, prof)
 	}
+}
+
+// profileFromReleasedSchema looks up the released schema for a pid (optionally a
+// specific ?version=) and projects it to a ProductProfile. Returns ok=false when
+// no released schema exists for the pid.
+func profileFromReleasedSchema(r *http.Request, db *pgxpool.Pool, pid string) (ProductProfile, string, bool) {
+	var (
+		raw         []byte
+		version     int
+		contentHash string
+		err         error
+	)
+	if v := r.URL.Query().Get("version"); v != "" {
+		ver, convErr := strconv.Atoi(v)
+		if convErr != nil {
+			return ProductProfile{}, "", false
+		}
+		err = db.QueryRow(r.Context(),
+			`SELECT schema_json, version, content_hash FROM released_products
+			  WHERE pid=$1 AND version=$2`, pid, ver).Scan(&raw, &version, &contentHash)
+	} else {
+		err = db.QueryRow(r.Context(),
+			`SELECT schema_json, version, content_hash FROM released_products
+			  WHERE pid=$1 ORDER BY version DESC LIMIT 1`, pid).Scan(&raw, &version, &contentHash)
+	}
+	if err == pgx.ErrNoRows || err != nil {
+		return ProductProfile{}, "", false
+	}
+
+	art, perr := schema.Parse(raw)
+	if perr != nil {
+		return ProductProfile{}, "", false
+	}
+	p := art.AppProfile()
+
+	caps := make([]Capability, 0, len(p.Capabilities))
+	for _, c := range p.Capabilities {
+		caps = append(caps, Capability{DP: c.DP, Kind: c.Kind, Label: c.Label, Min: c.Min, Max: c.Max, Unit: c.Unit})
+	}
+	prof := ProductProfile{
+		PID:           pid,
+		ConsumerType:  p.ConsumerType,
+		Display:       ProfileDisplay{Icon: p.Icon, DefaultName: p.DefaultName},
+		Capabilities:  caps,
+		SchemaVersion: &version,
+	}
+	if p.TileMetricDP != "" {
+		prof.TileMetric = &TileMetric{DP: p.TileMetricDP, Format: "{value}%"}
+	}
+	etag := `"` + contentHash + `"`
+	return prof, etag, true
 }
 
 // metricFor returns a human-readable status string for a device tile.

@@ -22,6 +22,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/binary"
 	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
@@ -81,61 +82,91 @@ func main() {
 	}
 	log.Printf("loaded %d devices from %s", len(rows), *csvFile)
 
+	// MQTT credentials are shared per tenant: ensure the tenant has a single
+	// (mq_user = tid, mq_pass) pair + one EMQX user, then reuse it for all devices.
+	mqUser, mqPass, created, err := ensureTenantMQTT(ctx, pool, tid, emqxBase, emqxKey, emqxSecret)
+	if err != nil {
+		log.Fatalf("ensure tenant mqtt credential for tid=%s: %v", tid, err)
+	}
+	if created {
+		log.Printf("tenant %s: minted shared MQTT credential mq_user=%s", tid, mqUser)
+	} else {
+		log.Printf("tenant %s: reusing existing shared MQTT credential mq_user=%s", tid, mqUser)
+	}
+
 	var results []result
 	for _, r := range rows {
-		res := seed(ctx, pool, tid, r, emqxBase, emqxKey, emqxSecret)
+		res := seed(ctx, pool, tid, r)
+		res.MQUser, res.MQPass = mqUser, mqPass
 		results = append(results, res)
 		log.Printf("[%s] mac=%-12s did=%s status=%s", res.Status, res.MAC, res.DID, res.Status)
 	}
 
-	// Print summary CSV to stdout.
+	// Print summary CSV to stdout. mq_user/mq_pass are the tenant-shared values.
 	fmt.Println("\nmac,did,mq_user,mq_pass,status")
 	for _, r := range results {
 		fmt.Printf("%s,%s,%s,%s,%s\n", r.MAC, r.DID, r.MQUser, r.MQPass, r.Status)
 	}
 
 	if emqxKey == "" {
-		fmt.Println("\n⚠  EMQX_API_KEY not set — EMQX users were NOT created.")
-		fmt.Println("Run these curl commands manually (replace <key>:<secret> with your EMQX API key):")
-		for _, r := range results {
-			if r.Status == "ok" {
-				fmt.Printf("curl -s -u <key>:<secret> -X POST %s/api/v5/authentication/password_based:built_in_database/users -H 'content-type: application/json' -d '{\"user_id\":\"%s\",\"password\":\"%s\"}'\n",
-					emqxBase, r.MQUser, r.MQPass)
-			}
-		}
+		fmt.Println("\n⚠  EMQX_API_KEY not set — the tenant EMQX user was NOT created.")
+		fmt.Println("Run this once for the tenant (replace <key>:<secret> with your EMQX API key):")
+		fmt.Printf("curl -s -u <key>:<secret> -X POST %s/api/v5/authentication/password_based:built_in_database/users -H 'content-type: application/json' -d '{\"user_id\":\"%s\",\"password\":\"%s\"}'\n",
+			emqxBase, mqUser, mqPass)
 	}
 }
 
-func seed(ctx context.Context, pool *pgxpool.Pool, tid string, r row, emqxBase, emqxKey, emqxSecret string) result {
+// ensureTenantMQTT returns the tenant's shared MQTT credential, minting one
+// (mq_user = tid, random mq_pass) and creating the matching EMQX user on first
+// call. created reports whether a new credential was generated this run.
+func ensureTenantMQTT(ctx context.Context, pool *pgxpool.Pool, tid, emqxBase, emqxKey, emqxSecret string) (mqUser, mqPass string, created bool, err error) {
+	var existingUser, existingPass *string
+	if err = pool.QueryRow(ctx,
+		`SELECT mq_user, mq_pass FROM tenants WHERE tid=$1`, tid,
+	).Scan(&existingUser, &existingPass); err != nil {
+		return "", "", false, err
+	}
+	if existingUser != nil && *existingUser != "" && existingPass != nil && *existingPass != "" {
+		return *existingUser, *existingPass, false, nil
+	}
+
+	mqUser = tid
+	mqPass = genSecret(16)
+	if _, err = pool.Exec(ctx,
+		`UPDATE tenants SET mq_user=$2, mq_pass=$3 WHERE tid=$1`, tid, mqUser, mqPass,
+	); err != nil {
+		return "", "", false, err
+	}
+	if emqxKey != "" {
+		if err = createEMQXUser(emqxBase, emqxKey, emqxSecret, mqUser, mqPass); err != nil {
+			return "", "", false, fmt.Errorf("emqx: %w", err)
+		}
+	}
+	return mqUser, mqPass, true, nil
+}
+
+// seed upserts one device_inventory row. The device's identity is its did (used
+// as the MQTT clientid); MQTT credentials are shared per tenant, not per device.
+func seed(ctx context.Context, pool *pgxpool.Pool, tid string, r row) result {
 	did := uuid.New().String()
-	mqUser := fmt.Sprintf("%s.%s", tid, did)
-	mqPass := genSecret(16)
+	bleMac := macPlusN(r.MAC, 2)
 
 	_, err := pool.Exec(ctx, `
-		INSERT INTO device_inventory (mac, tid, did, pid, mq_user, mq_pass, hw_config)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		ON CONFLICT (mac) DO NOTHING
-	`, r.MAC, tid, did, r.PID, mqUser, mqPass, r.HWConfig)
+		INSERT INTO device_inventory (mac, ble_mac, tid, did, pid, hw_config)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (mac) DO UPDATE SET ble_mac = EXCLUDED.ble_mac
+	`, r.MAC, bleMac, tid, did, r.PID, r.HWConfig)
 	if err != nil {
 		return result{MAC: r.MAC, Status: "db_error: " + err.Error()}
 	}
 
-	// Re-read in case ON CONFLICT skipped the insert (already exists).
-	var existingDID, existingUser, existingPass string
+	// Re-read in case ON CONFLICT skipped the insert (device already existed).
+	var existingDID string
 	pool.QueryRow(ctx,
-		`SELECT did, mq_user, mq_pass FROM device_inventory WHERE mac=$1`, r.MAC,
-	).Scan(&existingDID, &existingUser, &existingPass)
-	did, mqUser, mqPass = existingDID, existingUser, existingPass
+		`SELECT did FROM device_inventory WHERE mac=$1`, r.MAC,
+	).Scan(&existingDID)
 
-	res := result{MAC: r.MAC, DID: did, MQUser: mqUser, MQPass: mqPass, Status: "ok"}
-
-	if emqxKey != "" {
-		if err := createEMQXUser(emqxBase, emqxKey, emqxSecret, mqUser, mqPass); err != nil {
-			res.Status = "emqx_error: " + err.Error()
-		}
-	}
-
-	return res
+	return result{MAC: r.MAC, DID: existingDID, Status: "ok"}
 }
 
 func createEMQXUser(base, key, secret, userID, password string) error {
@@ -152,6 +183,9 @@ func createEMQXUser(base, key, secret, userID, password string) error {
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusConflict {
+		return nil // shared per-tenant user already exists — idempotent
+	}
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("EMQX returned %d", resp.StatusCode)
 	}
@@ -206,6 +240,18 @@ func parseCSV(path string) ([]row, error) {
 		rows = append(rows, r)
 	}
 	return rows, nil
+}
+
+// macPlusN increments a 12-char lowercase hex MAC by n.
+// ESP32 assigns BLE MAC = Wi-Fi base MAC + 2.
+func macPlusN(mac string, n uint64) string {
+	b, _ := hex.DecodeString(mac)
+	// Pad to 8 bytes for uint64 arithmetic.
+	padded := make([]byte, 8)
+	copy(padded[8-len(b):], b)
+	val := binary.BigEndian.Uint64(padded) + n
+	binary.BigEndian.PutUint64(padded, val)
+	return hex.EncodeToString(padded[2:]) // back to 6 bytes = 12 hex chars
 }
 
 func genSecret(n int) string {

@@ -599,11 +599,17 @@ Content-Type: application/json
 Returns the authoritative capability profile for a product ID. Clients use this to render the control UI dynamically. Response is cacheable.
 
 ```
-GET /v1/products/{pid}/profile
+GET /v1/products/{pid}/profile[?version=<n>]
 Authorization: Bearer <accessToken>
 ```
 
-**Supported PIDs:** `light-rgbcw` | `light1` | `th1` | `sp1` | `gen1`
+For any **released** PID the profile is derived from the released schema_version
+(the app projection of "Shared contract B": each DP's semantic facet → a
+capability kind), and the response includes a `schema_version` field. `?version=`
+selects a specific released version (default: latest). The legacy static PIDs
+below resolve via a fallback for backward compatibility.
+
+**Static fallback PIDs:** `light-rgbcw` | `light1` | `th1` | `sp1` | `gen1`
 
 **Response 200** *(example: `light-rgbcw`)*
 ```json
@@ -627,7 +633,9 @@ Authorization: Bearer <accessToken>
 }
 ```
 
-**Response headers:** `Cache-Control: max-age=3600`, `ETag: "light-rgbcw"`. Supports conditional requests with `If-None-Match` → 304.
+**Response headers:** `Cache-Control: max-age=3600`. `ETag` is the schema
+`content_hash` for released PIDs (or the pid for static profiles), so clients
+re-validate per version. Supports conditional requests with `If-None-Match` → 304.
 
 **Product catalog:**
 
@@ -638,6 +646,42 @@ Authorization: Bearer <accessToken>
 | `th1` | climate | power, target_temp (16–30°C) |
 | `sp1` | plug | power |
 | `gen1` | sensors | power |
+
+---
+
+## 6b. Admin / Service-to-Service APIs
+
+Service-to-service endpoints used by dev_portal (release push) and the admin
+portal (inventory seeding). Authenticated with a shared service token, sent as
+`Authorization: Bearer <ADMIN_SERVICE_TOKEN>` or `X-Service-Token: <token>`.
+
+### Released products
+
+```
+POST /admin/released-products      # ingest a released schema artifact (idempotent on content_hash)
+GET  /admin/released-products?tid=&pid=
+```
+
+`POST` body is the dev_portal "Shared contract A" artifact
+(`{tid, pid, version, content_hash, published_at, dps:[…]}`). It is upserted into
+`released_products` keyed by `(tid, pid, version)`; re-pushing identical content
+is a no-op. This is the single source of truth ZTP and the profile endpoint
+project from.
+
+### Inventory seeding
+
+```
+POST /admin/inventory/batches      # {tid, pid, schema_version, macs:[…] | qty, integrator_note}
+GET  /admin/inventory?tid=&pid=&status=
+```
+
+`POST` allocates a DID + MQTT credentials per device against the released
+`(tid, pid, schema_version)` and records them as `status=inventory` under a new
+`batch_id`. With explicit `macs[]` each device is bound to its MAC; with a bare
+`qty` the DIDs are reserved (MAC bound later at provision). Returns a batch
+summary including per-device `did/mac/mq_user/mq_pass`. `GET` lists inventory
+with a per-status count summary. Device lifecycle:
+`inventory → provisioned → activated → claimed → retired`.
 
 ---
 
@@ -1052,16 +1096,31 @@ MAC is normalized (case-insensitive, any delimiter).
 **Response 200 — Provision bundle**
 ```json
 {
-  "did":          "3fa85f64-5717-4562-b3fc-2c963f66afa6",
-  "tid":          "setu",
-  "pid":          "light-rgbcw",
-  "mq_user":      "setu.3fa85f64",
-  "mq_pass":      "device-mqtt-password",
-  "mq_uri":       "mqtts://emqx.setuiot.com:8883",
-  "cloud_pubkey": "a1b2c3d4e5f6...(128 hex chars = 64-byte P-256 X‖Y, uncompressed, NO 0x04 prefix)",
-  "hw_config":    {"gpio_relay": 4, "gpio_led": 2}
+  "did":            "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "tid":            "setu",
+  "pid":            "light-rgbcw",
+  "mq_user":        "setu.3fa85f64",
+  "mq_pass":        "device-mqtt-password",
+  "mq_uri":         "mqtts://emqx.setuiot.com:8883",
+  "cloud_pubkey":   "a1b2c3d4e5f6...(128 hex chars = 64-byte P-256 X‖Y, uncompressed, NO 0x04 prefix)",
+  "schema_version": 2,
+  "hw_config": {
+    "config": {
+      "dps": {
+        "1": {"type": "relay", "gpio": 4,  "active_high": true},
+        "2": {"type": "pwm",   "gpio": 13, "freq_hz": 5000, "resolution": 8}
+      }
+    }
+  }
 }
 ```
+
+`hw_config` is projected at provision time from the device's bound released
+schema (`released_products` for `tid/pid/schema_version`) — the firmware
+projection of "Shared contract B": a `{"config":{"dps":{…}}}` map keyed by DP id,
+containing only actuated DPs (`actuation != none`). The device parses this to map
+each DP to its real GPIO. When no released schema is bound, the per-device
+`hw_config` column is used as a fallback.
 
 This bundle is **burned into device flash** at the factory. The device uses `mq_user`/`mq_pass` to connect to MQTT and `cloud_pubkey` to verify signed BLE credentials.
 

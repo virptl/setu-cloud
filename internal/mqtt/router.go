@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	pahomqtt "github.com/eclipse/paho.mqtt.golang"
@@ -40,11 +41,12 @@ type shdMessage struct {
 
 // Router dispatches incoming MQTT messages to the appropriate handlers.
 type Router struct {
-	db       *pgxpool.Pool
-	cache    *redis.Client
-	registry *registry.Service
-	shadow   *shadow.Service
-	workers  chan struct{} // semaphore — limits concurrent DB writers
+	db         *pgxpool.Pool
+	cache      *redis.Client
+	registry   *registry.Service
+	shadow     *shadow.Service
+	workers    chan struct{} // semaphore — limits concurrent DB writers
+	tenantSeen sync.Map      // tid -> struct{}: cache of usernames known to be tenants
 }
 
 func NewRouter(db *pgxpool.Pool, cache *redis.Client) *Router {
@@ -55,6 +57,27 @@ func NewRouter(db *pgxpool.Pool, cache *redis.Client) *Router {
 		shadow:   shadow.New(db, cache),
 		workers:  make(chan struct{}, workerPoolSize),
 	}
+}
+
+// isKnownTenant reports whether tid is a real tenant. Device MQTT usernames are
+// the tid, so this distinguishes a device connection from the cloud backend (or
+// any other non-tenant client) in $SYS events. Positive results are cached.
+func (r *Router) isKnownTenant(ctx context.Context, tid string) bool {
+	if tid == "" {
+		return false
+	}
+	if _, ok := r.tenantSeen.Load(tid); ok {
+		return true
+	}
+	var exists bool
+	if err := r.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM tenants WHERE tid=$1)`, tid).Scan(&exists); err != nil {
+		log.Printf("isKnownTenant tid=%s: %v", tid, err)
+		return false
+	}
+	if exists {
+		r.tenantSeen.Store(tid, struct{}{})
+	}
+	return exists
 }
 
 // parseTopic extracts tid, pid, did from setu/{tid}/{pid}/{did}/{suffix}.
@@ -265,10 +288,21 @@ func (r *Router) publishWS(ctx context.Context, tid string, evt wsEvent) {
 // ── EMQX $SYS connect/disconnect handlers ────────────────────────────────────
 
 // sysEvent is the common subset of EMQX's $SYS connect/disconnect payloads.
-// EMQX publishes username as "{tid}.{did}" for all provisioned devices.
+// MQTT credentials are shared per tenant, so EMQX publishes username = tid for
+// every device; the device is identified by clientid = did.
 type sysEvent struct {
 	ClientID string `json:"clientid"`
 	Username string `json:"username"`
+}
+
+// deviceIdentity resolves a $SYS event to (tid, did) for a provisioned device,
+// or ok=false for non-device clients (e.g. the cloud backend). tid is the
+// username (validated against tenants); did is the clientid.
+func (r *Router) deviceIdentity(ctx context.Context, ev sysEvent) (tid, did string, ok bool) {
+	if ev.ClientID == "" || !r.isKnownTenant(ctx, ev.Username) {
+		return "", "", false
+	}
+	return ev.Username, ev.ClientID, true
 }
 
 // HandleSysConnected processes $SYS/brokers/+/clients/+/connected.
@@ -282,12 +316,12 @@ func (r *Router) HandleSysConnected(_ pahomqtt.Client, msg pahomqtt.Message) {
 		if err := json.Unmarshal(payload, &ev); err != nil {
 			return
 		}
-		tid, did, ok := parseMQUsername(ev.Username)
+		ctx := context.Background()
+		tid, did, ok := r.deviceIdentity(ctx, ev)
 		if !ok {
-			return // not a device username (e.g. cloud_backend)
+			return // not a device connection (e.g. cloud_backend)
 		}
 
-		ctx := context.Background()
 		// No TTL — device stays online until an explicit disconnect/LWT.
 		if err := r.registry.SetOnlineCached(ctx, tid, did, true); err != nil {
 			log.Printf("sys/connected set online cache tid=%s did=%s: %v", tid, did, err)
@@ -307,12 +341,12 @@ func (r *Router) HandleSysDisconnected(_ pahomqtt.Client, msg pahomqtt.Message) 
 		if err := json.Unmarshal(payload, &ev); err != nil {
 			return
 		}
-		tid, did, ok := parseMQUsername(ev.Username)
+		ctx := context.Background()
+		tid, did, ok := r.deviceIdentity(ctx, ev)
 		if !ok {
 			return
 		}
 
-		ctx := context.Background()
 		if err := r.registry.SetOnline(ctx, tid, did, false); err != nil {
 			log.Printf("sys/disconnected set offline tid=%s did=%s: %v", tid, did, err)
 		}
@@ -324,17 +358,6 @@ func (r *Router) HandleSysDisconnected(_ pahomqtt.Client, msg pahomqtt.Message) 
 		})
 		log.Printf("sys/disconnected tid=%s did=%s", tid, did)
 	}()
-}
-
-// parseMQUsername splits "{tid}.{did}" into its parts.
-// Returns ok=false for usernames that don't follow this pattern
-// (e.g. the cloud_backend superuser).
-func parseMQUsername(username string) (tid, did string, ok bool) {
-	idx := strings.IndexByte(username, '.')
-	if idx <= 0 || idx == len(username)-1 {
-		return "", "", false
-	}
-	return username[:idx], username[idx+1:], true
 }
 
 func cloneBytes(b []byte) []byte {

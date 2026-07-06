@@ -114,7 +114,7 @@ func NewRouter(
 		// Authenticated (app user JWT)
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.AuthUser(cfg.JWTSecret))
-			r.Get("/devices", app.ListDevices(db))
+			r.Get("/devices", app.ListDevices(db, reg))
 			r.Post("/devices/claim", app.ClaimDevice(db, cfg, discoveryRefresher))
 			r.Post("/devices/adopt", app.AdoptDevice(db, cfg, discoveryRefresher))
 			r.Post("/ble/sign", app.SignBLENonce(db, ks))

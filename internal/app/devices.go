@@ -14,6 +14,7 @@ import (
 	"github.com/setucore/setu-cloud/internal/api/middleware"
 	"github.com/setucore/setu-cloud/internal/config"
 	"github.com/setucore/setu-cloud/internal/mqtt"
+	"github.com/setucore/setu-cloud/internal/registry"
 )
 
 // DiscoveryRefresher is implemented by proactive.Service and called after a device
@@ -38,7 +39,7 @@ type deviceDTO struct {
 }
 
 // ListDevices handles GET /v1/devices.
-func ListDevices(db *pgxpool.Pool) http.HandlerFunc {
+func ListDevices(db *pgxpool.Pool, reg *registry.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		uid := middleware.UIDFromContext(r.Context())
 		// Join on did only — the device's MQTT tid (from firmware factory config)
@@ -67,6 +68,11 @@ func ListDevices(db *pgxpool.Pool) http.HandlerFunc {
 			var online bool
 			var schemaVersion int
 			rows.Scan(&did, &pid, &name, &room, &typ, &icon, &online, &deviceTID, &schemaVersion)
+			// The devices.is_online column only updates on explicit boo/reg events;
+			// $SYS connect events and /shd online:bool only touch the Redis cache
+			// (see internal/registry). Redis is the fresher signal, so it wins here
+			// the same way registry.Get/List override the DB value.
+			online = reg.IsOnlineCached(r.Context(), deviceTID, did)
 			dps := reportedDPS(r.Context(), db, deviceTID, did)
 			on, _ := dps["1"].(bool)
 			out = append(out, deviceDTO{

@@ -23,6 +23,18 @@ func WithLWT(topic string, payload []byte) Option {
 	}
 }
 
+// WithOnConnect registers a handler that runs on every successful (re)connect,
+// including the first. Subscriptions MUST be (re)established here rather than
+// once after Connect: with auto-reconnect the broker may hand back a fresh,
+// empty session (e.g. after the persistent session's expiry_interval elapses),
+// and Paho does not replay SUBSCRIBEs on its own. Subscribing only once means a
+// single reconnect can leave the client connected but subscribed to nothing.
+func WithOnConnect(fn func(pahomqtt.Client)) Option {
+	return func(opts *pahomqtt.ClientOptions) {
+		opts.SetOnConnectHandler(pahomqtt.OnConnectHandler(fn))
+	}
+}
+
 // NewClient creates and connects a Paho MQTT client.
 // caCertFile may be empty — TLS uses the system root pool in that case.
 func NewClient(brokerURL, clientID, username, password, caCertFile string, options ...Option) (pahomqtt.Client, error) {

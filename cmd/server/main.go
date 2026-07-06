@@ -11,6 +11,7 @@ import (
 
 	"encoding/hex"
 
+	pahomqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/setucore/setu-cloud/internal/api"
 	"github.com/setucore/setu-cloud/internal/cache"
 	"github.com/setucore/setu-cloud/internal/config"
@@ -60,20 +61,26 @@ func main() {
 	log.Println("Keystore initialised")
 
 	// ── MQTT ──────────────────────────────────────────────────────────────────
+	// Router is built before the client so it can be wired into the OnConnect
+	// handler. Subscriptions are (re)established on every (re)connect — see
+	// WithOnConnect — so a reconnect into a fresh broker session can never leave
+	// us connected-but-subscribed-to-nothing (which silently kills online
+	// detection and all device telemetry).
+	router := internalmqtt.NewRouter(pool, redisClient)
 	mqttClient, err := internalmqtt.NewClient(
 		cfg.MQTTBrokerURL,
 		cfg.MQTTClientID,
 		cfg.MQTTUsername,
 		cfg.MQTTPassword,
 		cfg.MQTTCACertFile,
+		internalmqtt.WithOnConnect(func(c pahomqtt.Client) {
+			internalmqtt.Subscribe(c, router)
+		}),
 	)
 	if err != nil {
 		log.Fatalf("mqtt: %v", err)
 	}
 	log.Println("MQTT connected:", cfg.MQTTBrokerURL)
-
-	router := internalmqtt.NewRouter(pool, redisClient)
-	internalmqtt.Subscribe(mqttClient, router)
 
 	// ── WebSocket hub ─────────────────────────────────────────────────────────
 	hub := ws.NewHub(redisClient)

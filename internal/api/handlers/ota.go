@@ -92,6 +92,17 @@ func AdminIssueOTA(db *pgxpool.Pool, pub *mqtt.Publisher, ks *keystore.Service) 
 
 		d, _ := json.Marshal(map[string]any{"url": body.URL, "sig": sigHex, "epoch": body.Epoch})
 		cmdID := uuid.New().String()
+
+		// Persist as pending so the device's ack updates this row (like other
+		// commands). FK (tid,did) -> devices is satisfied by the lookup above.
+		if _, err := db.Exec(r.Context(), `
+			INSERT INTO commands (id, tid, did, command_type, payload, status, issued_at)
+			VALUES ($1, $2, $3, 'ota', $4, 'pending', NOW())
+		`, cmdID, tid, did, d); err != nil {
+			adminErr(w, http.StatusInternalServerError, "persist command: "+err.Error())
+			return
+		}
+
 		if err := pub.Publish(tid, pid, did, "ota", cmdID, d); err != nil {
 			adminErr(w, http.StatusBadGateway, "publish failed: "+err.Error())
 			return

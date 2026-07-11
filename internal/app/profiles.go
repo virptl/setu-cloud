@@ -278,9 +278,45 @@ func metricFor(typ string, on bool, dps map[string]any) string {
 	}
 	switch typ {
 	case "lighting":
+		brightness := "100%"
 		if b, ok := dps["2"]; ok {
-			return formatNum(b, "%")
+			brightness = formatNum(b, "%")
 		}
+
+		// 1. Check for Color (DP 5)
+		if c, ok := dps["5"]; ok {
+			if rgb, ok := c.(map[string]any); ok {
+				var r, g, b int
+				if rv, ok := rgb["r"].(float64); ok {
+					r = int(rv)
+				}
+				if gv, ok := rgb["g"].(float64); ok {
+					g = int(gv)
+				}
+				if bv, ok := rgb["b"].(float64); ok {
+					b = int(bv)
+				}
+				hex := fmt.Sprintf("%02X%02X%02X", r, g, b)
+				return fmt.Sprintf("%s · #%s", brightness, hex)
+			}
+		}
+
+		// 2. Check for Color Temp (DP 3)
+		if ct, ok := dps["3"]; ok {
+			var ctVal float64
+			if v, ok := ct.(float64); ok {
+				ctVal = v
+			}
+			mode := "Ambient"
+			if ctVal == 0 {
+				mode = "Warm"
+			} else if ctVal == 100 {
+				mode = "Cool"
+			}
+			return fmt.Sprintf("%s · %s", brightness, mode)
+		}
+
+		return brightness
 	case "climate":
 		if t, ok := dps["2"]; ok {
 			return formatNum(t, "°C")

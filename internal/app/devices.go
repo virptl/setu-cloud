@@ -14,7 +14,14 @@ import (
 	"github.com/setucore/setu-cloud/internal/api/middleware"
 	"github.com/setucore/setu-cloud/internal/config"
 	"github.com/setucore/setu-cloud/internal/mqtt"
+	"github.com/setucore/setu-cloud/internal/registry"
 )
+
+// DiscoveryRefresher is implemented by proactive.Service and called after a device
+// is claimed or adopted so voice assistants re-discover the new device.
+type DiscoveryRefresher interface {
+	TriggerDiscoveryRefresh(userID string)
+}
 
 type deviceDTO struct {
 	ID           string         `json:"id"`
@@ -32,17 +39,17 @@ type deviceDTO struct {
 }
 
 // ListDevices handles GET /v1/devices.
-func ListDevices(db *pgxpool.Pool) http.HandlerFunc {
+func ListDevices(db *pgxpool.Pool, reg *registry.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		uid := middleware.UIDFromContext(r.Context())
 		// Join on did only — the device's MQTT tid (from firmware factory config)
 		// may differ from app_devices.tid, so we prefer the most recently seen row.
 		rows, err := db.Query(r.Context(), `
 			SELECT ad.did, ad.pid, ad.name, ad.room, ad.type, ad.icon,
-			       COALESCE(d.is_online, false), COALESCE(d.tid, ad.tid)
+			       COALESCE(d.is_online, false), COALESCE(d.tid, ad.tid), COALESCE(d.schema_version, 0)
 			FROM app_devices ad
 			LEFT JOIN LATERAL (
-			    SELECT is_online, tid FROM devices
+			    SELECT is_online, tid, schema_version FROM devices
 			    WHERE did = ad.did
 			    ORDER BY is_online DESC, last_seen_at DESC NULLS LAST
 			    LIMIT 1
@@ -59,13 +66,19 @@ func ListDevices(db *pgxpool.Pool) http.HandlerFunc {
 		for rows.Next() {
 			var did, pid, name, room, typ, icon, deviceTID string
 			var online bool
-			rows.Scan(&did, &pid, &name, &room, &typ, &icon, &online, &deviceTID)
+			var schemaVersion int
+			rows.Scan(&did, &pid, &name, &room, &typ, &icon, &online, &deviceTID, &schemaVersion)
+			// The devices.is_online column only updates on explicit boo/reg events;
+			// $SYS connect events and /shd online:bool only touch the Redis cache
+			// (see internal/registry). Redis is the fresher signal, so it wins here
+			// the same way registry.Get/List override the DB value.
+			online = reg.IsOnlineCached(r.Context(), deviceTID, did)
 			dps := reportedDPS(r.Context(), db, deviceTID, did)
 			on, _ := dps["1"].(bool)
 			out = append(out, deviceDTO{
 				ID: did, DID: did, PID: pid, Name: name, Room: room, Type: typ, Icon: icon,
 				On: on, Offline: !online, Metric: metricFor(typ, on, dps),
-				DPS: dps, Capabilities: capsForPID(pid),
+				DPS: dps, Capabilities: ResolveCapabilities(r.Context(), db, pid, schemaVersion),
 			})
 		}
 		writeJSON(w, 200, out)
@@ -73,7 +86,7 @@ func ListDevices(db *pgxpool.Pool) http.HandlerFunc {
 }
 
 // ClaimDevice handles POST /v1/devices/claim.
-func ClaimDevice(db *pgxpool.Pool, cfg *config.Config) http.HandlerFunc {
+func ClaimDevice(db *pgxpool.Pool, cfg *config.Config, refresher ...DiscoveryRefresher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		uid := middleware.UIDFromContext(r.Context())
 		var b struct {
@@ -124,6 +137,9 @@ func ClaimDevice(db *pgxpool.Pool, cfg *config.Config) http.HandlerFunc {
 			uuid.New(), uid, cfg.ConsumerTID, did, pid, b.Name, b.Room, b.Type, b.Icon); err != nil {
 			writeErr(w, 409, "conflict", "device already claimed")
 			return
+		}
+		if len(refresher) > 0 && refresher[0] != nil {
+			go refresher[0].TriggerDiscoveryRefresh(uid)
 		}
 		writeJSON(w, 201, deviceDTO{
 			ID: did, DID: did, PID: pid, Name: b.Name, Room: b.Room, Type: b.Type, Icon: b.Icon,
@@ -208,7 +224,7 @@ func Command(db *pgxpool.Pool, pub *mqtt.Publisher, cfg *config.Config) http.Han
 }
 
 // AdoptDevice handles POST /v1/devices/adopt — links a real provisioned device to a user.
-func AdoptDevice(db *pgxpool.Pool, cfg *config.Config) http.HandlerFunc {
+func AdoptDevice(db *pgxpool.Pool, cfg *config.Config, refresher ...DiscoveryRefresher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		uid := middleware.UIDFromContext(r.Context())
 		var b struct {
@@ -235,11 +251,11 @@ func AdoptDevice(db *pgxpool.Pool, cfg *config.Config) http.HandlerFunc {
 			b.Room = "Living Room"
 		}
 
-		// Look up provisioned device in inventory.
+		// Look up provisioned device by Wi-Fi MAC or BLE MAC (ESP32: BLE = Wi-Fi + 2).
 		var did, pid string
 		err := db.QueryRow(r.Context(), `
 			SELECT did, pid FROM device_inventory
-			WHERE mac=$1 AND provisioned_at IS NOT NULL
+			WHERE (mac=$1 OR ble_mac=$1) AND provisioned_at IS NOT NULL
 		`, mac).Scan(&did, &pid)
 		if err != nil {
 			writeErr(w, 404, "not_found", "device not provisioned or not in inventory")
@@ -248,23 +264,54 @@ func AdoptDevice(db *pgxpool.Pool, cfg *config.Config) http.HandlerFunc {
 
 		prof := profileForType(deviceTypeForPID(pid))
 
-		// Link to this user's account.
-		if _, err := db.Exec(r.Context(), `
+		// Link to this user's account (using ON CONFLICT to allow claiming transfer or updating metadata).
+		_, err = db.Exec(r.Context(), `
 			INSERT INTO app_devices (id, owner_id, tid, did, pid, name, room, type, icon)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-		`, uuid.New(), uid, cfg.ConsumerTID, did, pid, b.Name, b.Room, deviceTypeForPID(pid), b.Icon); err != nil {
-			writeErr(w, 409, "conflict", "device already claimed")
+			ON CONFLICT (did) DO UPDATE SET
+			  owner_id = EXCLUDED.owner_id,
+			  name = EXCLUDED.name,
+			  room = EXCLUDED.room,
+			  icon = EXCLUDED.icon
+		`, uuid.New(), uid, cfg.ConsumerTID, did, pid, b.Name, b.Room, deviceTypeForPID(pid), b.Icon)
+		if err != nil {
+			writeErr(w, 500, "internal_error", err.Error())
 			return
 		}
 
 		dps := reportedDPS(r.Context(), db, cfg.ConsumerTID, did)
 		on, _ := dps["1"].(bool)
 		typ := deviceTypeForPID(pid)
+		if len(refresher) > 0 && refresher[0] != nil {
+			go refresher[0].TriggerDiscoveryRefresh(uid)
+		}
 		writeJSON(w, 201, deviceDTO{
 			ID: did, DID: did, PID: pid, Name: b.Name, Room: b.Room, Type: typ, Icon: b.Icon,
 			On: on, Offline: false, Metric: metricFor(typ, on, dps),
 			DPS: dps, Capabilities: prof.Caps,
 		})
+	}
+}
+
+// LinkedAccounts handles GET /v1/linked-accounts.
+// Returns which voice platforms the current user has linked.
+func LinkedAccounts(db *pgxpool.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		uid := middleware.UIDFromContext(r.Context())
+		rows, err := db.Query(r.Context(),
+			`SELECT platform FROM linked_accounts WHERE user_id=$1 AND unlinked_at IS NULL`, uid)
+		if err != nil {
+			writeErr(w, 500, "internal", err.Error())
+			return
+		}
+		defer rows.Close()
+		result := map[string]bool{"alexa": false, "google": false}
+		for rows.Next() {
+			var platform string
+			rows.Scan(&platform)
+			result[platform] = true
+		}
+		writeJSON(w, 200, result)
 	}
 }
 

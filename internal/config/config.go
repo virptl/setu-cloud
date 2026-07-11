@@ -43,6 +43,21 @@ type Config struct {
 	SMTPUser     string
 	SMTPPassword string
 	SMTPFrom     string
+
+	// Voice assistant integrations
+	// GoogleSAToken is a short-lived Bearer token for Google Home Graph API (Report State / requestSync).
+	// In production, rotate this externally (e.g. via a cron that exchanges a service account key).
+	GoogleSAToken string
+
+	// AdminServiceToken guards the service-to-service /admin endpoints
+	// (released-products ingest from dev_portal, inventory seeding).
+	AdminServiceToken string
+
+	// EMQX HTTP API — used to provision per-device MQTT credentials when seeding
+	// inventory. Optional; when EMQXKey is empty, EMQX user creation is skipped.
+	EMQXBaseURL string
+	EMQXKey     string
+	EMQXSecret  string
 }
 
 func Load() (*Config, error) {
@@ -69,6 +84,11 @@ func Load() (*Config, error) {
 		SMTPUser:            env("SMTP_USER", ""),
 		SMTPPassword:        env("SMTP_PASSWORD", ""),
 		SMTPFrom:            env("SMTP_FROM", ""),
+		GoogleSAToken:       env("GOOGLE_SA_TOKEN", ""),
+		AdminServiceToken:   env("ADMIN_SERVICE_TOKEN", ""),
+		EMQXBaseURL:         env("EMQX_API_URL", "http://localhost:18083"),
+		EMQXKey:             env("EMQX_API_KEY", ""),
+		EMQXSecret:          env("EMQX_API_SECRET", ""),
 	}
 
 	if c.DeviceMQTTBrokerURI == "" {

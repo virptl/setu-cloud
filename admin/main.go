@@ -49,6 +49,9 @@ type server struct {
 	emqxSecret string
 	ks         *keystore.Service // nil when KEY_ENCRYPTION_KEY not configured
 
+	cloudBase string // setu-cloud API base URL for /admin/* proxying
+	svcToken  string // ADMIN_SERVICE_TOKEN attached server-side to cloud /admin/* calls
+
 	mu       sync.RWMutex
 	sessions map[string]sessionData
 }
@@ -72,7 +75,7 @@ type adminUser struct {
 }
 
 func main() {
-	addr        := flag.String("addr", ":9090", "listen address")
+	addr := flag.String("addr", ":9090", "listen address")
 	createAdmin := flag.String("create-admin", "", "bootstrap an admin user — format: username:password")
 	flag.Parse()
 
@@ -134,7 +137,12 @@ func main() {
 		emqxKey:    os.Getenv("EMQX_API_KEY"),
 		emqxSecret: os.Getenv("EMQX_API_SECRET"),
 		ks:         ks,
+		cloudBase:  env("CLOUD_API_URL", "http://127.0.0.1:8080"),
+		svcToken:   os.Getenv("ADMIN_SERVICE_TOKEN"),
 		sessions:   make(map[string]sessionData),
+	}
+	if srv.svcToken == "" {
+		log.Println("WARNING: ADMIN_SERVICE_TOKEN not set — released-products / inventory tabs will fail (cloud /admin/* returns 401)")
 	}
 
 	// Periodically purge expired sessions.
@@ -178,6 +186,15 @@ func main() {
 
 	protected("GET /api/tenant-keys", srv.listTenantKeys)
 	protected("POST /api/tenant-keys/{tid}/generate", srv.generateTenantKey)
+
+	// Released products + inventory — proxied to the cloud /admin/* APIs with the
+	// service token attached server-side (the browser only holds the session cookie).
+	protected("GET /api/released-products", srv.proxyReleasedProducts)
+	protected("POST /api/released-products/retire", srv.retireReleasedProduct)
+	protected("GET /api/inventory", srv.proxyInventory)
+	protected("GET /api/inventory/{did}/ztp", srv.proxyDeviceZTP)
+	protected("GET /api/batches", srv.proxyBatches)
+	protected("POST /api/inventory/batches", srv.createInventoryBatch)
 
 	log.Printf("setu admin → http://localhost%s", *addr)
 	log.Fatal(http.ListenAndServe(*addr, mux))
@@ -367,8 +384,10 @@ func (s *server) deleteAdminUser(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) listDevices(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.db.Query(r.Context(), `
-		SELECT mac, tid, did, pid, mq_user, hw_config, registered_at, provisioned_at
-		FROM device_inventory ORDER BY registered_at DESC`)
+		SELECT di.mac, di.tid, di.did, di.pid, COALESCE(t.mq_user, ''), di.hw_config,
+		       di.registered_at, di.provisioned_at
+		FROM device_inventory di JOIN tenants t ON t.tid = di.tid
+		ORDER BY di.registered_at DESC`)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -416,13 +435,25 @@ func (s *server) addDevice(w http.ResponseWriter, r *http.Request) {
 	}
 
 	did := uuid.New().String()
-	mqUser := fmt.Sprintf("%s.%s", tid, did)
-	mqPass := genSecret(16)
+	// Ensure the tenant has its single shared MQTT credential (mq_user = tid).
+	// Devices share it; identity at runtime comes from clientid = did.
+	var mqUser, mqPass string
+	if err := s.db.QueryRow(r.Context(), `
+		INSERT INTO tenants (tid, name, api_key_hash, mq_user, mq_pass)
+		VALUES ($1, $1, $2, $1, $3)
+		ON CONFLICT (tid) DO UPDATE
+		  SET mq_user = COALESCE(tenants.mq_user, EXCLUDED.mq_user),
+		      mq_pass = COALESCE(tenants.mq_pass, EXCLUDED.mq_pass)
+		RETURNING mq_user, mq_pass`,
+		tid, "seeded:"+genSecret(8), genSecret(16)).Scan(&mqUser, &mqPass); err != nil {
+		writeErr(w, 500, "could not resolve tenant mqtt credential: "+err.Error())
+		return
+	}
 
 	_, err := s.db.Exec(r.Context(), `
-		INSERT INTO device_inventory (mac, tid, did, pid, mq_user, mq_pass, hw_config)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		mac, tid, did, req.PID, mqUser, mqPass, hwConfig)
+		INSERT INTO device_inventory (mac, tid, did, pid, hw_config)
+		VALUES ($1, $2, $3, $4, $5)`,
+		mac, tid, did, req.PID, hwConfig)
 	if err != nil {
 		if strings.Contains(err.Error(), "duplicate") || strings.Contains(err.Error(), "unique") {
 			writeErr(w, 409, "MAC address already exists in inventory")
@@ -527,13 +558,24 @@ func (s *server) importCSV(w http.ResponseWriter, r *http.Request) {
 		}
 
 		did := uuid.New().String()
-		mqUser := fmt.Sprintf("%s.%s", tid, did)
-		mqPass := genSecret(16)
+		// Shared per-tenant MQTT credential (mq_user = tid), idempotent per tid.
+		var mqUser, mqPass string
+		if err := s.db.QueryRow(r.Context(), `
+			INSERT INTO tenants (tid, name, api_key_hash, mq_user, mq_pass)
+			VALUES ($1, $1, $2, $1, $3)
+			ON CONFLICT (tid) DO UPDATE
+			  SET mq_user = COALESCE(tenants.mq_user, EXCLUDED.mq_user),
+			      mq_pass = COALESCE(tenants.mq_pass, EXCLUDED.mq_pass)
+			RETURNING mq_user, mq_pass`,
+			tid, "seeded:"+genSecret(8), genSecret(16)).Scan(&mqUser, &mqPass); err != nil {
+			results = append(results, result{MAC: mac, Status: "error", Error: "tenant cred: " + err.Error()})
+			continue
+		}
 
 		_, err := s.db.Exec(r.Context(), `
-			INSERT INTO device_inventory (mac, tid, did, pid, mq_user, mq_pass, hw_config)
-			VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (mac) DO NOTHING`,
-			mac, tid, did, pid, mqUser, mqPass, hwConfig)
+			INSERT INTO device_inventory (mac, tid, did, pid, hw_config)
+			VALUES ($1, $2, $3, $4, $5) ON CONFLICT (mac) DO NOTHING`,
+			mac, tid, did, pid, hwConfig)
 		if err != nil {
 			results = append(results, result{MAC: mac, Status: "error", Error: err.Error()})
 			continue
@@ -699,6 +741,86 @@ func (s *server) generateTenantKey(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ── Cloud /admin/* proxy ─────────────────────────────────────────────────────
+//
+// These handlers forward to the setu-cloud API's service-token-guarded /admin/*
+// endpoints. The token is attached here, server-side — it is never sent to the
+// browser, which authenticates to this admin portal with its session cookie only.
+
+// cloudRequest issues an authenticated request to the cloud /admin/* API.
+func (s *server) cloudRequest(ctx context.Context, method, path string, body io.Reader) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, method, s.cloudBase+path, body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if s.svcToken != "" {
+		req.Header.Set("X-Service-Token", s.svcToken)
+		req.Header.Set("Authorization", "Bearer "+s.svcToken)
+	}
+	return (&http.Client{Timeout: 15 * time.Second}).Do(req)
+}
+
+// relayCloud streams the cloud response's status code + JSON body verbatim back
+// to the browser, so the front-end api() wrapper sees the cloud's errors as-is.
+func (s *server) relayCloud(w http.ResponseWriter, resp *http.Response, err error) {
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "cloud unreachable: "+err.Error())
+		return
+	}
+	defer resp.Body.Close()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
+}
+
+func (s *server) proxyGet(w http.ResponseWriter, r *http.Request, path string) {
+	resp, err := s.cloudRequest(r.Context(), http.MethodGet, path, nil)
+	s.relayCloud(w, resp, err)
+}
+
+func (s *server) proxyPost(w http.ResponseWriter, r *http.Request, path string, body []byte) {
+	resp, err := s.cloudRequest(r.Context(), http.MethodPost, path, bytes.NewReader(body))
+	s.relayCloud(w, resp, err)
+}
+
+func (s *server) proxyReleasedProducts(w http.ResponseWriter, r *http.Request) {
+	s.proxyGet(w, r, "/admin/released-products?"+r.URL.RawQuery)
+}
+
+func (s *server) proxyInventory(w http.ResponseWriter, r *http.Request) {
+	s.proxyGet(w, r, "/admin/inventory?"+r.URL.RawQuery)
+}
+
+func (s *server) proxyBatches(w http.ResponseWriter, r *http.Request) {
+	s.proxyGet(w, r, "/admin/batches?"+r.URL.RawQuery)
+}
+
+// retireReleasedProduct forwards a staff retire/restore toggle to the cloud.
+func (s *server) retireReleasedProduct(w http.ResponseWriter, r *http.Request) {
+	body, _ := io.ReadAll(r.Body)
+	s.proxyPost(w, r, "/admin/released-products/retire", body)
+}
+
+// proxyDeviceZTP forwards a read-only ZTP provision-bundle preview request.
+func (s *server) proxyDeviceZTP(w http.ResponseWriter, r *http.Request) {
+	s.proxyGet(w, r, "/admin/inventory/"+r.PathValue("did")+"/ztp")
+}
+
+// createInventoryBatch forwards a batch-creation request, stamping created_by
+// with the signed-in staff username. The body is JSON {tid,pid,schema_version,
+// macs[]|qty,integrator_note}; CSV is already parsed to macs[] client-side.
+func (s *server) createInventoryBatch(w http.ResponseWriter, r *http.Request) {
+	var req map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	req["created_by"] = s.sessionUser(r)
+	body, _ := json.Marshal(req)
+	s.proxyPost(w, r, "/admin/inventory/batches", body)
+}
+
 // ── EMQX ─────────────────────────────────────────────────────────────────────
 
 func (s *server) createEMQXUser(userID, password string) error {
@@ -714,6 +836,9 @@ func (s *server) createEMQXUser(userID, password string) error {
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusConflict {
+		return nil // shared per-tenant user already exists — idempotent
+	}
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("EMQX %d: %s", resp.StatusCode, b)

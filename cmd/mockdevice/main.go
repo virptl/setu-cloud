@@ -35,7 +35,9 @@ func main() {
 		"t": time.Now().Unix(), "pid": pid,
 	})
 
-	client, err := mqtt.NewClient(broker, "mock-"+did, user, pass, ca,
+	// clientid = did: with shared per-tenant credentials the broker identifies
+	// the device by its clientid, not the (now tenant-wide) username.
+	client, err := mqtt.NewClient(broker, did, user, pass, ca,
 		mqtt.WithLWT(upTopic, lwtPayload))
 	if err != nil {
 		log.Fatal(err)

@@ -11,12 +11,16 @@ import (
 
 	"encoding/hex"
 
+	pahomqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/setucore/setu-cloud/internal/api"
 	"github.com/setucore/setu-cloud/internal/cache"
 	"github.com/setucore/setu-cloud/internal/config"
 	"github.com/setucore/setu-cloud/internal/db"
+	"github.com/setucore/setu-cloud/internal/iot"
 	"github.com/setucore/setu-cloud/internal/keystore"
 	internalmqtt "github.com/setucore/setu-cloud/internal/mqtt"
+	"github.com/setucore/setu-cloud/internal/oauth"
+	"github.com/setucore/setu-cloud/internal/proactive"
 	"github.com/setucore/setu-cloud/internal/ws"
 )
 
@@ -57,24 +61,37 @@ func main() {
 	log.Println("Keystore initialised")
 
 	// ── MQTT ──────────────────────────────────────────────────────────────────
+	// Router is built before the client so it can be wired into the OnConnect
+	// handler. Subscriptions are (re)established on every (re)connect — see
+	// WithOnConnect — so a reconnect into a fresh broker session can never leave
+	// us connected-but-subscribed-to-nothing (which silently kills online
+	// detection and all device telemetry).
+	router := internalmqtt.NewRouter(pool, redisClient)
 	mqttClient, err := internalmqtt.NewClient(
 		cfg.MQTTBrokerURL,
 		cfg.MQTTClientID,
 		cfg.MQTTUsername,
 		cfg.MQTTPassword,
 		cfg.MQTTCACertFile,
+		internalmqtt.WithOnConnect(func(c pahomqtt.Client) {
+			internalmqtt.Subscribe(c, router)
+		}),
 	)
 	if err != nil {
 		log.Fatalf("mqtt: %v", err)
 	}
 	log.Println("MQTT connected:", cfg.MQTTBrokerURL)
 
-	router := internalmqtt.NewRouter(pool, redisClient)
-	internalmqtt.Subscribe(mqttClient, router)
-
 	// ── WebSocket hub ─────────────────────────────────────────────────────────
 	hub := ws.NewHub(redisClient)
 	go hub.RunRedisSubscriber(ctx)
+
+	// ── Voice assistant services ──────────────────────────────────────────────
+	pub := internalmqtt.NewPublisher(mqttClient)
+	oauthStore := oauth.NewStore(pool)
+	iotSvc := iot.New(pool, redisClient, pub, cfg)
+	proactiveSvc := proactive.New(redisClient, oauthStore, iotSvc, cfg)
+	go proactiveSvc.Run(ctx)
 
 	// ── device_events cleanup ─────────────────────────────────────────────────
 	// Runs once at startup (catches any backlog) then every 24 hours.
@@ -103,8 +120,7 @@ func main() {
 	}()
 
 	// ── HTTP server ───────────────────────────────────────────────────────────
-	pub := internalmqtt.NewPublisher(mqttClient)
-	handler := api.NewRouter(pool, redisClient, pub, hub, cfg, ks)
+	handler := api.NewRouter(pool, redisClient, pub, hub, cfg, ks, oauthStore, iotSvc, proactiveSvc)
 
 	srv := &http.Server{
 		Addr:         cfg.ListenAddr,

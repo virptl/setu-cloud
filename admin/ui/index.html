@@ -7,38 +7,158 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
   <style>
-    :root { --setu-accent: #ff6b35; }
-    body { background: #f0f2f5; }
-    .navbar { background: #1a1a2e !important; }
-    .navbar-brand { font-weight: 700; letter-spacing: -0.3px; color: #fff; }
+    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+    :root {
+      --setu-accent: #ff6b35;
+      --setu-primary: #6366f1;
+      --bg-dark: #07080d;
+      --card-dark: #121422;
+      --border-dark: #202336;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+    }
+    body {
+      background: var(--bg-dark);
+      color: var(--text-main);
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      overflow-x: hidden;
+    }
+    .navbar {
+      background: rgba(18, 20, 34, 0.75) !important;
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border-dark);
+    }
+    .navbar-brand { font-weight: 800; font-size: 1.3rem; letter-spacing: -0.5px; color: #fff; }
     .navbar-brand span { color: var(--setu-accent); }
-    .nav-tabs .nav-link { color: #555; border: none; padding: .6rem 1.25rem; }
-    .nav-tabs .nav-link.active { color: #1a1a2e; font-weight: 600;
-      border-bottom: 3px solid var(--setu-accent); background: transparent; }
-    .tab-pane { padding-top: 0; }
-    .card { border: none; box-shadow: 0 1px 4px rgba(0,0,0,.08); border-radius: .5rem; }
-    .card.rounded-top-0 { border-top-left-radius: 0; border-top-right-radius: 0; }
-    .mono { font-family: 'SF Mono', 'Consolas', monospace; font-size: .8rem; }
+    .nav-tabs { border-color: var(--border-dark) !important; }
+    .nav-tabs .nav-link {
+      color: var(--text-muted);
+      border: none;
+      padding: .8rem 1.5rem;
+      font-weight: 500;
+      transition: all 0.2s ease;
+      background: transparent !important;
+    }
+    .nav-tabs .nav-link:hover {
+      color: var(--text-main);
+    }
+    .nav-tabs .nav-link.active {
+      color: #fff;
+      font-weight: 700;
+      border-bottom: 3px solid var(--setu-accent);
+    }
+    .tab-pane { padding-top: 1rem; }
+    .card {
+      background: var(--card-dark);
+      border: 1px solid var(--border-dark);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+      border-radius: 1rem;
+      overflow: hidden;
+      color: var(--text-main);
+    }
+    .card-header {
+      background: rgba(255, 255, 255, 0.02) !important;
+      border-bottom: 1px solid var(--border-dark) !important;
+      color: var(--text-main) !important;
+    }
+    .table {
+      --bs-table-bg: transparent;
+      --bs-table-color: var(--text-main);
+      --bs-table-hover-color: #fff;
+      --bs-table-hover-bg: rgba(255, 255, 255, 0.02);
+      --bs-table-border-color: var(--border-dark);
+    }
+    .table th {
+      color: var(--text-muted);
+      font-weight: 600;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .table td {
+      border-color: var(--border-dark);
+    }
+    .mono { font-family: 'JetBrains Mono', monospace; font-size: .8rem; }
     .copy-btn { cursor: pointer; border: none; background: none; padding: 0 3px;
-                color: #adb5bd; line-height: 1; vertical-align: middle; }
-    .copy-btn:hover { color: #0d6efd; }
+                color: var(--text-muted); line-height: 1; vertical-align: middle; transition: color 0.15s; }
+    .copy-btn:hover { color: var(--setu-primary); }
     .secret { filter: blur(4px); transition: filter .15s; cursor: pointer; }
     .secret:hover { filter: none; }
     .badge-prov  { background: #198754; }
     .badge-pend  { background: #fd7e14; }
-    .drop-zone { border: 2px dashed #dee2e6; border-radius: .5rem;
-                 padding: 3rem 2rem; text-align: center; cursor: pointer; transition: all .2s; }
-    .drop-zone:hover, .drop-zone.over { border-color: var(--setu-accent); background: #fff8f5; }
+    .drop-zone { border: 2px dashed var(--border-dark); border-radius: 1rem;
+                 padding: 4rem 2rem; text-align: center; cursor: pointer; transition: all .25s ease;
+                 background: rgba(255,255,255,0.01); }
+    .drop-zone:hover, .drop-zone.over { border-color: var(--setu-accent); background: rgba(255,107,53,0.05); box-shadow: 0 0 20px rgba(255,107,53,0.1); }
+    .form-control, .form-select {
+      background: var(--bg-dark);
+      border: 1px solid var(--border-dark);
+      color: var(--text-main);
+    }
+    .form-control::placeholder {
+      color: var(--text-muted);
+    }
+    .form-control:focus, .form-select:focus {
+      background: var(--bg-dark);
+      border-color: var(--setu-accent);
+      color: var(--text-main);
+      box-shadow: 0 0 15px rgba(255,107,53,0.25);
+    }
+    .btn-primary {
+      background: var(--setu-accent);
+      border: none;
+      font-weight: 600;
+      transition: all 0.2s ease;
+    }
+    .btn-primary:hover {
+      background: #e85c28;
+      transform: translateY(-1px);
+    }
+    .btn-outline-primary {
+      color: var(--setu-accent);
+      border-color: var(--setu-accent);
+    }
+    .btn-outline-primary:hover {
+      background: var(--setu-accent);
+      border-color: var(--setu-accent);
+    }
+    .btn-check:checked+.btn-outline-primary {
+      background: var(--setu-accent);
+      border-color: var(--setu-accent);
+    }
+    .modal-content {
+      background: var(--card-dark);
+      border: 1px solid var(--border-dark);
+      color: var(--text-main);
+      border-radius: 1rem;
+    }
+    .modal-header, .modal-footer {
+      border-color: var(--border-dark);
+    }
+    .btn-close {
+      filter: invert(1);
+    }
+    .badge {
+      font-weight: 600;
+    }
     .result-ok    { color: #198754; }
     .result-error { color: #dc3545; }
     .result-skip  { color: #6c757d; }
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(25, 135, 84, 0.5); }
+      70% { box-shadow: 0 0 0 6px rgba(25, 135, 84, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(25, 135, 84, 0); }
+    }
   </style>
 </head>
 <body>
 
 <!-- Navbar -->
 <nav class="navbar navbar-dark mb-0 px-4 py-2">
-  <span class="navbar-brand"><span>setu</span> admin</span>
+  <a class="navbar-brand d-flex align-items-center gap-2" href="/" style="text-decoration: none;">
+    <img src="/setu-mark-white.png" alt="Setu Logo" style="height: 24px;">
+    <span>setu</span> admin
+  </a>
   <span class="text-secondary small me-auto ms-3" id="status-bar">Loading…</span>
   <span class="text-secondary small me-3">
     <i class="bi bi-person-circle me-1"></i><span id="nav-username"></span>
@@ -75,6 +195,12 @@
       <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-keys" type="button"
               onclick="loadTenantKeys()">
         <i class="bi bi-key me-1"></i>Tenant Keys
+      </button>
+    </li>
+    <li class="nav-item">
+      <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-audit" type="button"
+              onclick="loadAuditLogs()">
+        <i class="bi bi-journal-text me-1"></i>Audit Logs
       </button>
     </li>
     <li class="nav-item ms-auto">
@@ -207,10 +333,10 @@
             <thead class="table-light">
               <tr>
                 <th>MAC</th><th>Device ID</th><th>TID / PID</th><th>Schema</th>
-                <th>Status</th><th>Batch</th><th>MQTT User</th><th>Provisioned</th><th>Registered</th><th>ZTP</th>
+                <th>Status</th><th>Batch</th><th>MQTT User</th><th>Provisioned</th><th>Registered</th><th>ZTP</th><th>Actions</th>
               </tr>
             </thead>
-            <tbody id="invdash-tbody"><tr><td colspan="10" class="text-center text-muted py-5">Loading…</td></tr></tbody>
+            <tbody id="invdash-tbody"><tr><td colspan="11" class="text-center text-muted py-5">Loading…</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -256,6 +382,45 @@
             </thead>
             <tbody id="keys-tbody">
               <tr><td colspan="7" class="text-center text-muted py-5">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Audit Logs tab ────────────────────────────────────────────────── -->
+    <div class="tab-pane fade" id="tab-audit">
+      <div class="card rounded-top-0">
+        <div class="card-header bg-white d-flex align-items-center gap-2 py-2 flex-wrap">
+          <span class="fw-semibold"><i class="bi bi-journal-text me-1 text-primary"></i>Command History & Audit Logs</span>
+          <input class="form-control form-control-sm ms-3" style="max-width:150px" id="audit-f-tid" placeholder="TID…" oninput="loadAuditLogs()">
+          <input class="form-control form-control-sm" style="max-width:150px" id="audit-f-did" placeholder="DID…" oninput="loadAuditLogs()">
+          <select class="form-select form-select-sm w-auto" id="audit-f-type" onchange="loadAuditLogs()">
+            <option value="">All command types</option>
+            <option value="set">set</option>
+            <option value="get">get</option>
+            <option value="ota">ota</option>
+            <option value="cfg">cfg</option>
+            <option value="rot">rot</option>
+          </select>
+          <select class="form-select form-select-sm w-auto" id="audit-f-status" onchange="loadAuditLogs()">
+            <option value="">All statuses</option>
+            <option value="pending">pending</option>
+            <option value="acked_ok">acked_ok</option>
+            <option value="acked_fail">acked_fail</option>
+            <option value="timeout">timeout</option>
+          </select>
+          <button class="btn btn-sm btn-outline-secondary ms-auto" onclick="loadAuditLogs()" title="Refresh"><i class="bi bi-arrow-clockwise"></i></button>
+        </div>
+        <div class="table-responsive">
+          <table class="table table-sm table-hover mb-0 align-middle">
+            <thead class="table-light">
+              <tr>
+                <th>Command ID</th><th>Tenant (TID)</th><th>Device ID</th><th>Type</th><th>Status</th><th>Payload</th><th>Issued At</th><th>Acked At</th>
+              </tr>
+            </thead>
+            <tbody id="audit-tbody">
+              <tr><td colspan="8" class="text-center text-muted py-5">Loading…</td></tr>
             </tbody>
           </table>
         </div>
@@ -606,7 +771,13 @@ function showHW(mac) {
 // ── Delete ────────────────────────────────────────────────────────────────────
 function confirmDel(mac) {
   delTarget = mac;
+  statusChangeTarget = null; delUserTarget = null; genKeyTarget = null;
   document.getElementById('del-mac-label').textContent = mac;
+  document.querySelector('#del-modal .modal-title').textContent = 'Remove device?';
+  document.querySelector('#del-modal .modal-body').innerHTML = `Remove <code>${mac}</code> from inventory?<br>This cannot be undone.`;
+  const confirmBtn = document.getElementById('del-confirm');
+  confirmBtn.textContent = 'Delete';
+  confirmBtn.className = 'btn btn-sm btn-danger';
   bsDelModal.show();
 }
 
@@ -924,9 +1095,13 @@ let delUserTarget = null;
 
 function confirmDelUser(username) {
   delUserTarget = username;
-  delTarget = null;
+  statusChangeTarget = null; delTarget = null; genKeyTarget = null;
   document.getElementById('del-mac-label').textContent = username;
   document.querySelector('#del-modal .modal-title').textContent = 'Remove admin user?';
+  document.querySelector('#del-modal .modal-body').innerHTML = `Remove admin user <code>${username}</code>?<br>This cannot be undone.`;
+  const confirmBtn = document.getElementById('del-confirm');
+  confirmBtn.textContent = 'Delete';
+  confirmBtn.className = 'btn btn-sm btn-danger';
   bsDelModal.show();
 }
 
@@ -938,7 +1113,7 @@ document.getElementById('del-confirm').onclick = async () => {
         { provisioned: statusChangeValue });
       bsDelModal.hide();
       toast(`${statusChangeTarget} → ${statusChangeValue ? 'Provisioned' : 'Pending'}`);
-      loadDevices();
+      loadInvDash();
     } catch (e) {
       bsDelModal.hide();
       toast(e.message, 'danger');
@@ -990,6 +1165,9 @@ document.getElementById('del-modal').addEventListener('hidden.bs.modal', () => {
   document.querySelector('#del-modal .modal-title').textContent = 'Remove device?';
   document.querySelector('#del-modal .modal-body').innerHTML =
     `Remove <code id="del-mac-label"></code> from inventory?<br>This cannot be undone.`;
+  const confirmBtn = document.getElementById('del-confirm');
+  confirmBtn.textContent = 'Delete';
+  confirmBtn.className = 'btn btn-sm btn-danger';
   delUserTarget = null;
   genKeyTarget = null;
   statusChangeTarget = null; statusChangeValue = null;
@@ -1004,14 +1182,20 @@ function confirmStatusChange(mac, provisioned) {
   statusChangeValue  = provisioned;
   delTarget = null; delUserTarget = null; genKeyTarget = null;
 
-  document.querySelector('#del-modal .modal-title').textContent =
-    provisioned ? 'Mark as Provisioned?' : 'Reset to Pending?';
+  const title = provisioned ? 'Mark as Provisioned?' : 'Unprovision Device?';
+  document.querySelector('#del-modal .modal-title').textContent = title;
+  
   document.querySelector('#del-modal .modal-body').innerHTML = provisioned
     ? `Manually mark <code>${mac}</code> as provisioned?<br>
-       <span class="text-muted small">This will also create a devices row so the device can connect via MQTT.</span>`
-    : `Reset <code>${mac}</code> back to <strong>Pending</strong>?<br>
-       <span class="text-warning small"><i class="bi bi-exclamation-triangle me-1"></i>
-       The device will need to re-run factory provisioning (ZTP) to reconnect.</span>`;
+       <span class="text-muted small">This will allow the device to connect via MQTT immediately.</span>`
+    : `<strong>Warning:</strong> Are you sure you want to unprovision <code>${mac}</code>?<br>
+       <span class="text-warning small"><i class="bi bi-exclamation-triangle-fill me-1"></i>
+       This will reset the device back to Pending, unclaim it from any users, and clean up active shadows/commands. The device must re-run factory provisioning (ZTP) to reconnect.</span>`;
+
+  const confirmBtn = document.getElementById('del-confirm');
+  confirmBtn.textContent = provisioned ? 'Provision' : 'Unprovision';
+  confirmBtn.className = provisioned ? 'btn btn-sm btn-success' : 'btn btn-sm btn-warning';
+  
   bsDelModal.show();
 }
 
@@ -1058,9 +1242,15 @@ async function loadReleased() {
       (invCountsByProduct[k] ||= {})[d.status] = (invCountsByProduct[k]?.[d.status] || 0) + 1;
     }
     renderReleased();
+
+    const total = inv.total || 0;
+    const prov = (inv.devices || []).filter(d => d.status !== 'inventory' && d.status !== 'retired').length;
+    document.getElementById('status-bar').textContent =
+      `${total} device${total !== 1 ? 's' : ''} · ${prov} active/provisioned · ${total - prov} pending`;
   } catch (e) {
     document.getElementById('released-tbody').innerHTML =
       `<tr><td colspan="8" class="text-center text-danger py-5">${esc(e.message)}</td></tr>`;
+    document.getElementById('status-bar').textContent = 'Error loading inventory stats';
   }
 }
 
@@ -1352,9 +1542,15 @@ async function loadInvDash() {
     renderInvDevices(inv.devices || []);
     renderBatches(batches || []);
     populateBatchFilter(batches || [], batch);
+
+    const total = inv.total || 0;
+    const prov = (inv.devices || []).filter(d => d.status !== 'inventory' && d.status !== 'retired').length;
+    document.getElementById('status-bar').textContent =
+      `${total} device${total !== 1 ? 's' : ''} · ${prov} active/provisioned · ${total - prov} pending`;
   } catch (e) {
     document.getElementById('invdash-tbody').innerHTML =
       `<tr><td colspan="9" class="text-center text-danger py-5">${esc(e.message)}</td></tr>`;
+    document.getElementById('status-bar').textContent = 'Error loading inventory';
   }
 }
 
@@ -1371,20 +1567,42 @@ function renderInvCounts(counts, total) {
 
 function renderInvDevices(devices) {
   const tbody = document.getElementById('invdash-tbody');
-  if (!devices.length) { tbody.innerHTML = `<tr><td colspan="10" class="text-center text-muted py-5">No devices</td></tr>`; return; }
-  tbody.innerHTML = devices.map(d => `<tr>
-    <td class="mono small">${d.mac || '<span class=\"text-muted\">—</span>'}</td>
-    <td class="mono small text-muted">${d.did.slice(0,8)}… ${cpBtn(d.did,'Copy DID')}</td>
-    <td><span class="badge bg-secondary me-1">${esc(d.tid)}</span><span class="badge bg-primary">${esc(d.pid)}</span></td>
-    <td>${d.schema_version!=null ? `v${d.schema_version}` : '<span class="text-muted">—</span>'}</td>
-    <td>${invBadge(d.status)}</td>
-    <td class="mono small text-muted">${d.batch_id ? d.batch_id.slice(0,8)+'…' : '—'}</td>
-    <td class="mono small">${esc(d.mq_user)}</td>
-    <td class="text-muted small">${fmtDate(d.provisioned_at)}</td>
-    <td class="text-muted small">${fmtDate(d.registered_at)}</td>
-    <td><button class="btn btn-sm btn-outline-secondary" title="View ZTP provision bundle"
-               onclick="showZTP('${d.did}')"><i class="bi bi-cpu"></i></button></td>
-  </tr>`).join('');
+  if (!devices.length) { tbody.innerHTML = `<tr><td colspan="11" class="text-center text-muted py-5">No devices</td></tr>`; return; }
+  tbody.innerHTML = devices.map(d => {
+    let actions = '';
+    if (d.mac) {
+      if (d.status === 'inventory') {
+        actions = `<button class="btn btn-sm btn-outline-success" title="Mark as Provisioned"
+                           onclick="confirmStatusChange('${d.mac}', true)">
+                     <i class="bi bi-check2-circle"></i>
+                   </button>`;
+      } else if (d.status === 'provisioned' || d.status === 'activated' || d.status === 'claimed') {
+        actions = `<button class="btn btn-sm btn-outline-warning" title="Unprovision Device (Reset to Pending)"
+                           onclick="confirmStatusChange('${d.mac}', false)">
+                     <i class="bi bi-arrow-counterclockwise"></i>
+                   </button>`;
+      }
+    }
+    return `<tr>
+      <td class="mono small">${d.mac || '<span class="text-muted">—</span>'}</td>
+      <td class="mono small text-muted">${d.did.slice(0,8)}… ${cpBtn(d.did,'Copy DID')}</td>
+      <td><span class="badge bg-secondary me-1">${esc(d.tid)}</span><span class="badge bg-primary">${esc(d.pid)}</span></td>
+      <td>${d.schema_version!=null ? `v${d.schema_version}` : '<span class="text-muted">—</span>'}</td>
+      <td>
+        ${invBadge(d.status)}
+        ${d.status !== 'inventory' ? (d.is_online
+          ? `<span class="badge bg-success ms-1" style="padding: 0.35em 0.5em; font-size: 0.7rem; animation: pulse 2s infinite;"><i class="bi bi-circle-fill me-1" style="font-size: 0.5rem; vertical-align: middle;"></i>Online</span>`
+          : `<span class="badge bg-secondary ms-1" style="padding: 0.35em 0.5em; font-size: 0.7rem;"><i class="bi bi-circle-fill me-1" style="font-size: 0.5rem; vertical-align: middle;"></i>Offline</span>`) : ''}
+      </td>
+      <td class="mono small text-muted">${d.batch_id ? d.batch_id.slice(0,8)+'…' : '—'}</td>
+      <td class="mono small">${esc(d.mq_user)}</td>
+      <td class="text-muted small">${fmtDate(d.provisioned_at)}</td>
+      <td class="text-muted small">${fmtDate(d.registered_at)}</td>
+      <td><button class="btn btn-sm btn-outline-secondary" title="View ZTP provision bundle"
+                 onclick="showZTP('${d.did}')"><i class="bi bi-cpu"></i></button></td>
+      <td>${actions}</td>
+    </tr>`;
+  }).join('');
 }
 
 // Read-only preview of the ZTP /factory/provision bundle this device receives.
@@ -1445,6 +1663,44 @@ function populateBatchFilter(batches, selected) {
 function filterByBatch(id) {
   document.getElementById('inv-f-batch').value = id;
   loadInvDash();
+}
+
+function loadAuditLogs() {
+  const tid = document.getElementById('audit-f-tid').value.trim();
+  const did = document.getElementById('audit-f-did').value.trim();
+  const cmdType = document.getElementById('audit-f-type').value;
+  const status = document.getElementById('audit-f-status').value;
+  const qs = new URLSearchParams({ tid, did, command_type: cmdType, status }).toString();
+  
+  const tbody = document.getElementById('audit-tbody');
+  if (!tbody) return;
+  
+  tbody.innerHTML = `<tr><td colspan="8" class="text-center text-muted py-5">Loading…</td></tr>`;
+  
+  api('GET', '/api/commands?' + qs).then(logs => {
+    if (!logs || !logs.length) {
+      tbody.innerHTML = `<tr><td colspan="8" class="text-center text-muted py-5">No command logs found</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = logs.map(l => {
+      const payloadStr = l.payload ? JSON.stringify(l.payload) : '—';
+      const statusBadge = `<span class="badge bg-${
+        { pending: 'warning', acked_ok: 'success', acked_fail: 'danger', timeout: 'dark' }[l.status] || 'secondary'
+      }">${esc(l.status)}</span>`;
+      return `<tr>
+        <td class="mono small">${l.id.slice(0, 8)}… ${cpBtn(l.id, 'Copy command ID')}</td>
+        <td><span class="badge bg-secondary mono">${esc(l.tid)}</span></td>
+        <td class="mono small text-muted">${l.did.slice(0, 8)}… ${cpBtn(l.did, 'Copy DID')}</td>
+        <td><span class="badge bg-light text-dark border">${esc(l.command_type)}</span></td>
+        <td>${statusBadge}</td>
+        <td class="mono small text-truncate" style="max-width: 250px;" title="${esc(payloadStr)}">${esc(payloadStr)}</td>
+        <td class="text-muted small">${fmtDate(l.issued_at)}</td>
+        <td class="text-muted small">${fmtDate(l.acked_at)}</td>
+      </tr>`;
+    }).join('');
+  }).catch(e => {
+    tbody.innerHTML = `<tr><td colspan="8" class="text-center text-danger py-5">${esc(e.message)}</td></tr>`;
+  });
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────

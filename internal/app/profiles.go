@@ -241,7 +241,7 @@ func profileFromReleasedSchema(r *http.Request, db *pgxpool.Pool, pid string) (P
 	} else {
 		err = db.QueryRow(r.Context(),
 			`SELECT schema_json, version, content_hash FROM released_products
-			  WHERE pid=$1 ORDER BY version DESC LIMIT 1`, pid).Scan(&raw, &version, &contentHash)
+			  WHERE pid=$1 AND retired_at IS NULL ORDER BY version DESC LIMIT 1`, pid).Scan(&raw, &version, &contentHash)
 	}
 	if err == pgx.ErrNoRows || err != nil {
 		return ProductProfile{}, "", false
@@ -303,15 +303,14 @@ func metricFor(typ string, on bool, dps map[string]any) string {
 
 		// 2. Check for Color Temp (DP 3)
 		if ct, ok := dps["3"]; ok {
-			var ctVal float64
-			if v, ok := ct.(float64); ok {
-				ctVal = v
-			}
+			ctVal, ok := asFloat64(ct)
 			mode := "Ambient"
-			if ctVal == 0 {
-				mode = "Warm"
-			} else if ctVal == 100 {
-				mode = "Cool"
+			if ok {
+				if ctVal == 0 {
+					mode = "Warm"
+				} else if ctVal == 100 {
+					mode = "Cool"
+				}
 			}
 			return fmt.Sprintf("%s · %s", brightness, mode)
 		}
@@ -325,9 +324,22 @@ func metricFor(typ string, on bool, dps map[string]any) string {
 	return "On"
 }
 
-func formatNum(v any, unit string) string {
+func asFloat64(v any) (float64, bool) {
 	switch n := v.(type) {
 	case float64:
+		return n, true
+	case float32:
+		return float64(n), true
+	case int:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	}
+	return 0, false
+}
+
+func formatNum(v any, unit string) string {
+	if n, ok := asFloat64(v); ok {
 		return fmt.Sprintf("%.0f%s", n, unit)
 	}
 	return "On"

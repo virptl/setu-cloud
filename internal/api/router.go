@@ -69,6 +69,7 @@ func NewRouter(
 		r.Get("/admin/inventory/{did}/ztp", handlers.PreviewProvision(db, cfg, ks))
 		r.Post("/admin/devices/{did}/ota", handlers.AdminIssueOTA(db, pub, ks))
 		r.Get("/admin/batches", handlers.ListBatches(db))
+		r.Get("/admin/commands", handlers.ListCommands(db))
 	})
 
 	// ── Authenticated routes ──────────────────────────────────────────────────

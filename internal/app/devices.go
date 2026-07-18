@@ -200,10 +200,13 @@ func Command(db *pgxpool.Pool, pub *mqtt.Publisher, cfg *config.Config) http.Han
 
 		cmdID := uuid.New().String()
 		payload, _ := json.Marshal(b.DPS)
-		db.Exec(r.Context(),
+		if _, err := db.Exec(r.Context(),
 			`INSERT INTO commands (id, tid, did, command_type, payload, status, issued_at)
 			 VALUES ($1, $2, $3, 'set', $4, 'pending', NOW())`,
-			cmdID, deviceTID, did, payload)
+			cmdID, deviceTID, did, payload); err != nil {
+			writeErr(w, 500, "database_error", err.Error())
+			return
+		}
 		if err := pub.Publish(deviceTID, pid, did, "set", cmdID, payload); err != nil {
 			writeErr(w, 500, "mqtt_publish_failed", err.Error())
 			return
@@ -216,7 +219,7 @@ func Command(db *pgxpool.Pool, pub *mqtt.Publisher, cfg *config.Config) http.Han
 					VALUES ($1, $2, $3, $4, NOW())
 					ON CONFLICT (tid, did, dp_id) DO UPDATE
 					  SET desired_value = EXCLUDED.desired_value, updated_at = NOW()`,
-					cfg.ConsumerTID, did, n, []byte(val))
+					deviceTID, did, n, []byte(val))
 			}
 		}
 		writeJSON(w, 202, map[string]any{"id": cmdID, "status": "pending"})

@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/redis/go-redis/v9"
@@ -86,6 +87,7 @@ func (h *Hub) RunRedisSubscriber(ctx context.Context) {
 func (h *Hub) writePump(c *client) {
 	defer c.conn.Close()
 	for msg := range c.send {
+		c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 		if err := c.conn.WriteMessage(websocket.TextMessage, msg); err != nil {
 			log.Printf("ws write tid=%s: %v", c.tid, err)
 			return

@@ -195,6 +195,8 @@ func main() {
 	protected("GET /api/inventory/{did}/ztp", srv.proxyDeviceZTP)
 	protected("GET /api/batches", srv.proxyBatches)
 	protected("POST /api/inventory/batches", srv.createInventoryBatch)
+	protected("GET /api/commands", srv.proxyCommands)
+	protected("POST /api/devices/{did}/ota", srv.proxyIssueOTA)
 
 	log.Printf("setu admin → http://localhost%s", *addr)
 	log.Fatal(http.ListenAndServe(*addr, mux))
@@ -205,6 +207,11 @@ func main() {
 func (s *server) auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !s.checkSession(r) {
+			// Allow public access to logo assets for the login page
+			if r.URL.Path == "/setu-mark-white.png" || r.URL.Path == "/setu-mark.png" || r.URL.Path == "/setu-logo.png" {
+				next.ServeHTTP(w, r)
+				return
+			}
 			if strings.HasPrefix(r.URL.Path, "/api/") {
 				http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 				return
@@ -572,12 +579,16 @@ func (s *server) importCSV(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		_, err := s.db.Exec(r.Context(), `
+		res, err := s.db.Exec(r.Context(), `
 			INSERT INTO device_inventory (mac, tid, did, pid, hw_config)
 			VALUES ($1, $2, $3, $4, $5) ON CONFLICT (mac) DO NOTHING`,
 			mac, tid, did, pid, hwConfig)
 		if err != nil {
 			results = append(results, result{MAC: mac, Status: "error", Error: err.Error()})
+			continue
+		}
+		if res.RowsAffected() == 0 {
+			results = append(results, result{MAC: mac, Status: "error", Error: "MAC address already exists in inventory"})
 			continue
 		}
 
@@ -608,7 +619,6 @@ func (s *server) updateDeviceStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var ct interface{ RowsAffected() int64 }
 	var err error
 
 	if req.Provisioned {
@@ -650,16 +660,41 @@ func (s *server) updateDeviceStatus(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, 200, map[string]string{"mac": mac, "status": "provisioned"})
 	} else {
-		// Reset to pending — clears provisioned_at so the device can be
-		// re-provisioned via ZTP (factory reset scenario).
-		ct, err = s.db.Exec(r.Context(),
-			`UPDATE device_inventory SET provisioned_at=NULL WHERE mac=$1`, mac)
-		if err != nil {
-			writeErr(w, 500, err.Error())
+		// Reset to pending — clears provisioned_at and sets status = 'inventory'
+		// also deletes corresponding devices and app_devices rows so the device is completely clean.
+		tx, txErr := s.db.Begin(r.Context())
+		if txErr != nil {
+			writeErr(w, 500, txErr.Error())
 			return
 		}
-		if ct.RowsAffected() == 0 {
+		defer tx.Rollback(r.Context())
+
+		// 1. Get DID to clean up related tables
+		var did string
+		tx.QueryRow(r.Context(),
+			`SELECT did FROM device_inventory WHERE mac=$1`, mac).Scan(&did)
+
+		// 2. Update device_inventory
+		res, execErr := tx.Exec(r.Context(),
+			`UPDATE device_inventory SET provisioned_at=NULL, status='inventory' WHERE mac=$1`, mac)
+		if execErr != nil {
+			writeErr(w, 500, execErr.Error())
+			return
+		}
+		if res.RowsAffected() == 0 {
 			writeErr(w, 404, "device not found")
+			return
+		}
+
+		if did != "" {
+			// 3. Delete from devices (cascades to shadows and commands)
+			tx.Exec(r.Context(), `DELETE FROM devices WHERE did=$1`, did)
+			// 4. Delete from app_devices (unclaims from any user)
+			tx.Exec(r.Context(), `DELETE FROM app_devices WHERE did=$1`, did)
+		}
+
+		if err = tx.Commit(r.Context()); err != nil {
+			writeErr(w, 500, err.Error())
 			return
 		}
 		writeJSON(w, 200, map[string]string{"mac": mac, "status": "pending"})
@@ -790,6 +825,15 @@ func (s *server) proxyReleasedProducts(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) proxyInventory(w http.ResponseWriter, r *http.Request) {
 	s.proxyGet(w, r, "/admin/inventory?"+r.URL.RawQuery)
+}
+
+func (s *server) proxyCommands(w http.ResponseWriter, r *http.Request) {
+	s.proxyGet(w, r, "/admin/commands?"+r.URL.RawQuery)
+}
+
+func (s *server) proxyIssueOTA(w http.ResponseWriter, r *http.Request) {
+	body, _ := io.ReadAll(r.Body)
+	s.proxyPost(w, r, "/admin/devices/"+r.PathValue("did")+"/ota", body)
 }
 
 func (s *server) proxyBatches(w http.ResponseWriter, r *http.Request) {

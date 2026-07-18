@@ -348,6 +348,7 @@ type inventoryDTO struct {
 	MQUser        string     `json:"mq_user"`
 	ProvisionedAt *time.Time `json:"provisioned_at"`
 	RegisteredAt  time.Time  `json:"registered_at"`
+	IsOnline      bool       `json:"is_online"`
 }
 
 // ListInventory serves GET /admin/inventory?tid=&pid=&status= with a per-status
@@ -359,8 +360,11 @@ func ListInventory(db *pgxpool.Pool) http.HandlerFunc {
 
 		rows, err := db.Query(r.Context(), `
 			SELECT di.mac, di.did, di.tid, di.pid, di.schema_version, di.status, di.batch_id::text,
-			       COALESCE(t.mq_user, ''), di.provisioned_at, di.registered_at
-			  FROM device_inventory di JOIN tenants t ON t.tid = di.tid
+			       COALESCE(t.mq_user, ''), di.provisioned_at, di.registered_at,
+			       COALESCE(dev.is_online, false)
+			  FROM device_inventory di 
+			  JOIN tenants t ON t.tid = di.tid
+			  LEFT JOIN devices dev ON dev.tid = di.tid AND dev.did = di.did
 			 WHERE ($1='' OR di.tid=$1) AND ($2='' OR di.pid=$2) AND ($3='' OR di.status=$3)
 			   AND ($4=''::text OR di.batch_id::text=$4)
 			 ORDER BY di.registered_at DESC`, tid, pid, status, batch)
@@ -373,7 +377,7 @@ func ListInventory(db *pgxpool.Pool) http.HandlerFunc {
 		for rows.Next() {
 			var d inventoryDTO
 			if err := rows.Scan(&d.MAC, &d.DID, &d.TID, &d.PID, &d.SchemaVersion,
-				&d.Status, &d.BatchID, &d.MQUser, &d.ProvisionedAt, &d.RegisteredAt); err != nil {
+				&d.Status, &d.BatchID, &d.MQUser, &d.ProvisionedAt, &d.RegisteredAt, &d.IsOnline); err != nil {
 				adminErr(w, http.StatusInternalServerError, err.Error())
 				return
 			}
@@ -581,4 +585,55 @@ func createEMQXUser(cfg *config.Config, userID, password string) error {
 		return fmt.Errorf("EMQX returned %d", resp.StatusCode)
 	}
 	return nil
+}
+
+// ListCommands serves GET /admin/commands?tid=&did=&status=&command_type= to retrieve command history logs.
+func ListCommands(db *pgxpool.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		tid, did, status, cmdType := q.Get("tid"), q.Get("did"), q.Get("status"), q.Get("command_type")
+
+		rows, err := db.Query(r.Context(), `
+			SELECT id, tid, did, command_type, payload, status, issued_at, acked_at
+			FROM commands
+			WHERE ($1='' OR tid=$1) AND ($2='' OR did=$2) AND ($3='' OR status=$3) AND ($4='' OR command_type=$4)
+			ORDER BY issued_at DESC
+			LIMIT 150`, tid, did, status, cmdType)
+		if err != nil {
+			adminErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		defer rows.Close()
+
+		type commandDTO struct {
+			ID          string     `json:"id"`
+			TID         string     `json:"tid"`
+			DID         string     `json:"did"`
+			CommandType string     `json:"command_type"`
+			Payload     any        `json:"payload"`
+			Status      string     `json:"status"`
+			IssuedAt    time.Time  `json:"issued_at"`
+			AckedAt     *time.Time `json:"acked_at"`
+		}
+
+		out := []commandDTO{}
+		for rows.Next() {
+			var cmd commandDTO
+			var payloadRaw []byte
+			if err := rows.Scan(&cmd.ID, &cmd.TID, &cmd.DID, &cmd.CommandType, &payloadRaw, &cmd.Status, &cmd.IssuedAt, &cmd.AckedAt); err != nil {
+				adminErr(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			if len(payloadRaw) > 0 {
+				var p any
+				if json.Unmarshal(payloadRaw, &p) == nil {
+					cmd.Payload = p
+				} else {
+					cmd.Payload = string(payloadRaw)
+				}
+			}
+			out = append(out, cmd)
+		}
+		writeJSON(w, http.StatusOK, out)
+	}
 }

@@ -24,6 +24,11 @@ type Device struct {
 	LastSeenAt    *time.Time
 	HWConfig      json.RawMessage
 	SchemaVersion *int
+	// Diagnostics — nil/zero until the device has diagnostics reporting
+	// enabled and has sent at least one reg/boo with a "diag" object.
+	LastResetReason *string
+	CrashCount      *int
+	MinFreeHeap     *int
 }
 
 type Service struct {
@@ -85,17 +90,29 @@ func (s *Service) SetOnline(ctx context.Context, tid, did string, online bool) e
 	return err
 }
 
+// UpdateDiag persists the latest reset-reason/crash-count/min-free-heap
+// telemetry from a reg/boo "diag" object. Called only when that object was
+// actually present — see mqtt.Router.updateDiag.
+func (s *Service) UpdateDiag(ctx context.Context, tid, did string, resetReason string, crashCount, minFreeHeap int) error {
+	_, err := s.db.Exec(ctx,
+		`UPDATE devices SET last_reset_reason=$1, crash_count=$2, min_free_heap=$3 WHERE tid=$4 AND did=$5`,
+		resetReason, crashCount, minFreeHeap, tid, did)
+	return err
+}
+
 // Get returns a single device. is_online is overridden from Redis if available.
 func (s *Service) Get(ctx context.Context, tid, did string) (*Device, error) {
 	var d Device
 	err := s.db.QueryRow(ctx, `
 		SELECT tid, did, pid, COALESCE(fw_version,''), COALESCE(ip,''),
-		       COALESCE(rssi,0), is_online, registered_at, last_seen_at, hw_config, schema_version
+		       COALESCE(rssi,0), is_online, registered_at, last_seen_at, hw_config, schema_version,
+		       last_reset_reason, crash_count, min_free_heap
 		  FROM devices
 		 WHERE tid=$1 AND did=$2
 	`, tid, did).Scan(
 		&d.TID, &d.DID, &d.PID, &d.FWVersion, &d.IP,
 		&d.RSSI, &d.IsOnline, &d.RegisteredAt, &d.LastSeenAt, &d.HWConfig, &d.SchemaVersion,
+		&d.LastResetReason, &d.CrashCount, &d.MinFreeHeap,
 	)
 	if err == pgx.ErrNoRows {
 		return nil, fmt.Errorf("device %s/%s not found", tid, did)
@@ -112,7 +129,8 @@ func (s *Service) Get(ctx context.Context, tid, did string) (*Device, error) {
 func (s *Service) List(ctx context.Context, tid string) ([]Device, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT tid, did, pid, COALESCE(fw_version,''), COALESCE(ip,''),
-		       COALESCE(rssi,0), is_online, registered_at, last_seen_at, hw_config, schema_version
+		       COALESCE(rssi,0), is_online, registered_at, last_seen_at, hw_config, schema_version,
+		       last_reset_reason, crash_count, min_free_heap
 		  FROM devices
 		 WHERE tid=$1
 		 ORDER BY registered_at DESC
@@ -128,6 +146,7 @@ func (s *Service) List(ctx context.Context, tid string) ([]Device, error) {
 		if err := rows.Scan(
 			&d.TID, &d.DID, &d.PID, &d.FWVersion, &d.IP,
 			&d.RSSI, &d.IsOnline, &d.RegisteredAt, &d.LastSeenAt, &d.HWConfig, &d.SchemaVersion,
+			&d.LastResetReason, &d.CrashCount, &d.MinFreeHeap,
 		); err != nil {
 			return nil, err
 		}

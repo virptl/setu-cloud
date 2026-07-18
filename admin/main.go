@@ -196,6 +196,7 @@ func main() {
 	protected("GET /api/batches", srv.proxyBatches)
 	protected("POST /api/inventory/batches", srv.createInventoryBatch)
 	protected("GET /api/commands", srv.proxyCommands)
+	protected("POST /api/devices/{did}/ota", srv.proxyIssueOTA)
 
 	log.Printf("setu admin → http://localhost%s", *addr)
 	log.Fatal(http.ListenAndServe(*addr, mux))
@@ -828,6 +829,11 @@ func (s *server) proxyInventory(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) proxyCommands(w http.ResponseWriter, r *http.Request) {
 	s.proxyGet(w, r, "/admin/commands?"+r.URL.RawQuery)
+}
+
+func (s *server) proxyIssueOTA(w http.ResponseWriter, r *http.Request) {
+	body, _ := io.ReadAll(r.Body)
+	s.proxyPost(w, r, "/admin/devices/"+r.PathValue("did")+"/ota", body)
 }
 
 func (s *server) proxyBatches(w http.ResponseWriter, r *http.Request) {

@@ -203,6 +203,12 @@
         <i class="bi bi-journal-text me-1"></i>Audit Logs
       </button>
     </li>
+    <li class="nav-item">
+      <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-ota" type="button"
+              onclick="loadFirmwareReleases()">
+        <i class="bi bi-cloud-arrow-down me-1"></i>Firmware & OTA
+      </button>
+    </li>
     <li class="nav-item ms-auto">
       <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-users" type="button"
               onclick="loadAdminUsers()">
@@ -427,6 +433,78 @@
       </div>
     </div>
 
+    <!-- ── Firmware & OTA tab ────────────────────────────────────────────── -->
+    <div class="tab-pane fade" id="tab-ota">
+      <div class="row g-3 pt-2">
+        <!-- Register firmware form -->
+        <div class="col-lg-4">
+          <div class="card">
+            <div class="card-header bg-white fw-semibold py-3">
+              <i class="bi bi-cloud-plus me-2 text-primary"></i>Register Firmware Release
+            </div>
+            <div class="card-body">
+              <form id="ota-form" novalidate onsubmit="submitFirmwareRelease(event)">
+                <div class="mb-3">
+                  <label class="form-label small fw-semibold">Target Product (PID) <span class="text-danger">*</span></label>
+                  <input type="text" class="form-control" id="ota-pid"
+                         placeholder="e.g. pid_12345" required autocomplete="off">
+                </div>
+                <div class="mb-3">
+                  <label class="form-label small fw-semibold">Version Tag <span class="text-danger">*</span></label>
+                  <input type="text" class="form-control" id="ota-version"
+                         placeholder="e.g. v1.0.0" required autocomplete="off">
+                </div>
+                <div class="mb-3">
+                  <label class="form-label small fw-semibold">Epoch <span class="text-danger">*</span></label>
+                  <input type="number" min="0" class="form-control" id="ota-epoch"
+                         placeholder="e.g. 1" required>
+                  <div class="form-text">Must be >= device's running epoch to prevent rollbacks.</div>
+                </div>
+                <div class="mb-3">
+                  <label class="form-label small fw-semibold">Firmware URL (UF2/Bin) <span class="text-danger">*</span></label>
+                  <input type="url" class="form-control" id="ota-url"
+                         placeholder="https://example.com/firmware.bin" required>
+                </div>
+                <div class="mb-3">
+                  <label class="form-label small fw-semibold">SHA-256 Checksum <span class="text-muted">(optional)</span></label>
+                  <input type="text" class="form-control mono" id="ota-sha256"
+                         placeholder="64 hex characters">
+                  <div class="form-text">If blank, the cloud will download & hash the URL.</div>
+                </div>
+                <button type="submit" class="btn btn-primary w-100 mt-2">
+                  <i class="bi bi-cloud-arrow-up me-1"></i>Register Release
+                </button>
+              </form>
+            </div>
+          </div>
+        </div>
+
+        <!-- Firmware library table -->
+        <div class="col-lg-8">
+          <div class="card">
+            <div class="card-header bg-white fw-semibold py-3 d-flex align-items-center">
+              <span><i class="bi bi-collection me-1 text-primary"></i>Firmware Library</span>
+              <button class="btn btn-sm btn-outline-secondary ms-auto" onclick="loadFirmwareReleases()">
+                <i class="bi bi-arrow-clockwise"></i>
+              </button>
+            </div>
+            <div class="table-responsive">
+              <table class="table table-sm table-hover mb-0 align-middle">
+                <thead class="table-light">
+                  <tr>
+                    <th>PID</th><th>Version</th><th>Epoch</th><th>Firmware URL</th><th>SHA-256</th><th></th>
+                  </tr>
+                </thead>
+                <tbody id="ota-tbody">
+                  <tr><td colspan="6" class="text-center text-muted py-4">No firmware releases registered.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- ── Admin Users tab ───────────────────────────────────────────────── -->
     <div class="tab-pane fade" id="tab-users">
       <div class="row g-3 pt-2">
@@ -511,6 +589,61 @@
       <div class="modal-footer border-0 pt-0">
         <button class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
         <button class="btn btn-sm btn-danger" id="del-confirm">Delete</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- OTA Deploy Modal -->
+<div class="modal fade" id="deploy-ota-modal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h6 class="modal-title"><i class="bi bi-cloud-arrow-down me-1"></i>Issue OTA Firmware Update</h6>
+        <button class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-info py-2 small mb-3">
+          Targeting device: <strong id="ota-target-mac" class="mono"></strong><br>
+          Product ID (PID): <strong id="ota-target-pid" class="mono"></strong>
+        </div>
+        
+        <form id="deploy-ota-form" novalidate onsubmit="submitOTADeployment(event)">
+          <input type="hidden" id="ota-target-did">
+          
+          <div class="mb-3">
+            <label class="form-label small fw-semibold">Select Registered Firmware</label>
+            <select class="form-select" id="ota-select-release" onchange="toggleOTAManualInput()">
+              <!-- Populated dynamically -->
+            </select>
+          </div>
+          
+          <div class="form-check mb-3">
+            <input class="form-check-input" type="checkbox" id="ota-manual-check" onchange="toggleOTAManualInput()">
+            <label class="form-check-label small fw-semibold" for="ota-manual-check">
+              Enter firmware details manually
+            </label>
+          </div>
+          
+          <div id="ota-manual-fields" class="d-none">
+            <div class="mb-3">
+              <label class="form-label small fw-semibold">Firmware URL (UF2/Bin) <span class="text-danger">*</span></label>
+              <input type="url" class="form-control" id="ota-deploy-url" placeholder="https://example.com/firmware.bin">
+            </div>
+            <div class="mb-3">
+              <label class="form-label small fw-semibold">Epoch <span class="text-danger">*</span></label>
+              <input type="number" min="0" class="form-control" id="ota-deploy-epoch" placeholder="e.g. 1">
+            </div>
+            <div class="mb-3">
+              <label class="form-label small fw-semibold">SHA-256 Checksum <span class="text-muted">(optional)</span></label>
+              <input type="text" class="form-control mono" id="ota-deploy-sha256" placeholder="64 hex characters">
+            </div>
+          </div>
+          
+          <button type="submit" class="btn btn-primary w-100" id="ota-deploy-btn">
+            <i class="bi bi-cloud-arrow-up me-1"></i>Issue OTA Command
+          </button>
+        </form>
       </div>
     </div>
   </div>
@@ -604,6 +737,7 @@ const bsDelModal = new bootstrap.Modal(document.getElementById('del-modal'));
 const bsHwModal  = new bootstrap.Modal(document.getElementById('hw-modal'));
 const bsSchemaModal = new bootstrap.Modal(document.getElementById('schema-modal'));
 const bsZtpModal = new bootstrap.Modal(document.getElementById('ztp-modal'));
+const bsOTAModal = new bootstrap.Modal(document.getElementById('deploy-ota-modal'));
 
 // ── Global state ─────────────────────────────────────────────────────────────
 let allDevices = [];
@@ -1577,9 +1711,13 @@ function renderInvDevices(devices) {
                      <i class="bi bi-check2-circle"></i>
                    </button>`;
       } else if (d.status === 'provisioned' || d.status === 'activated' || d.status === 'claimed') {
-        actions = `<button class="btn btn-sm btn-outline-warning" title="Unprovision Device (Reset to Pending)"
+        actions = `<button class="btn btn-sm btn-outline-warning me-1" title="Unprovision Device (Reset to Pending)"
                            onclick="confirmStatusChange('${d.mac}', false)">
                      <i class="bi bi-arrow-counterclockwise"></i>
+                   </button>
+                   <button class="btn btn-sm btn-outline-info" title="Deploy OTA Firmware Update"
+                           onclick="initOTADeploy('${d.mac}', '${d.did}', '${d.pid}')">
+                     <i class="bi bi-cloud-arrow-down"></i>
                    </button>`;
       }
     }
@@ -1703,6 +1841,168 @@ function loadAuditLogs() {
   });
 }
 
+// ── OTA Firmware Manager ──────────────────────────────────────────────────────
+let firmwareReleases = [];
+
+function loadFirmwareReleases() {
+  const stored = localStorage.getItem('setu_firmware_releases');
+  if (stored) {
+    try { firmwareReleases = JSON.parse(stored); } catch { firmwareReleases = []; }
+  } else {
+    firmwareReleases = [];
+  }
+  renderFirmwareReleases();
+}
+
+function saveFirmwareReleases() {
+  localStorage.setItem('setu_firmware_releases', JSON.stringify(firmwareReleases));
+}
+
+function renderFirmwareReleases() {
+  const tbody = document.getElementById('ota-tbody');
+  if (!tbody) return;
+  if (!firmwareReleases.length) {
+    tbody.innerHTML = `<tr><td colspan="6" class="text-center text-muted py-4">No firmware releases registered.</td></tr>`;
+    return;
+  }
+  const sorted = [...firmwareReleases].sort((a, b) => a.pid.localeCompare(b.pid) || b.epoch - a.epoch);
+  tbody.innerHTML = sorted.map(f => {
+    const shaShort = f.sha256 ? f.sha256.slice(0, 10) + '…' : '<span class="text-muted">—</span>';
+    return `<tr>
+      <td class="mono small">${esc(f.pid)}</td>
+      <td><span class="badge bg-primary">${esc(f.version)}</span></td>
+      <td><span class="badge bg-secondary">${f.epoch}</span></td>
+      <td class="small text-truncate" style="max-width: 200px;" title="${esc(f.url)}">${esc(f.url)}</td>
+      <td class="mono small text-muted" title="${esc(f.sha256 || '')}">${shaShort}</td>
+      <td class="text-end">
+        <button class="btn btn-sm btn-outline-danger" title="Delete Release" onclick="deleteFirmwareRelease('${f.pid}', '${f.version}')">
+          <i class="bi bi-trash"></i>
+        </button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function submitFirmwareRelease(event) {
+  event.preventDefault();
+  const pid = document.getElementById('ota-pid').value.trim();
+  const version = document.getElementById('ota-version').value.trim();
+  const epoch = parseInt(document.getElementById('ota-epoch').value, 10);
+  const url = document.getElementById('ota-url').value.trim();
+  const sha256 = document.getElementById('ota-sha256').value.trim();
+  
+  if (!pid || !version || isNaN(epoch) || !url) {
+    toast('Please fill all required fields', 'warning');
+    return;
+  }
+  
+  const dup = firmwareReleases.find(f => f.pid === pid && (f.version === version || f.epoch === epoch));
+  if (dup) {
+    toast(`A release with this version or epoch already exists for PID ${pid}`, 'danger');
+    return;
+  }
+  
+  firmwareReleases.push({ pid, version, epoch, url, sha256 });
+  saveFirmwareReleases();
+  renderFirmwareReleases();
+  event.target.reset();
+  toast(`Firmware ${version} registered successfully!`);
+}
+
+function deleteFirmwareRelease(pid, version) {
+  if (!confirm(`Delete firmware release ${version} for PID ${pid}?`)) return;
+  firmwareReleases = firmwareReleases.filter(f => !(f.pid === pid && f.version === version));
+  saveFirmwareReleases();
+  renderFirmwareReleases();
+  toast(`Firmware release deleted`);
+}
+
+function initOTADeploy(mac, did, pid) {
+  document.getElementById('ota-target-mac').textContent = mac;
+  document.getElementById('ota-target-pid').textContent = pid;
+  document.getElementById('ota-target-did').value = did;
+  
+  loadFirmwareReleases();
+  
+  const matched = firmwareReleases.filter(f => f.pid === pid);
+  const select = document.getElementById('ota-select-release');
+  
+  if (matched.length) {
+    select.innerHTML = matched.map(f => 
+      `<option value="${esc(f.url)}|${f.epoch}|${esc(f.sha256 || '')}">${esc(f.version)} (Epoch ${f.epoch})</option>`
+    ).join('');
+    document.getElementById('ota-manual-check').checked = false;
+    document.getElementById('ota-manual-fields').classList.add('d-none');
+    select.disabled = false;
+  } else {
+    select.innerHTML = `<option value="">No registered releases for this PID</option>`;
+    select.disabled = true;
+    document.getElementById('ota-manual-check').checked = true;
+    document.getElementById('ota-manual-fields').classList.remove('d-none');
+  }
+  
+  document.getElementById('ota-deploy-url').value = '';
+  document.getElementById('ota-deploy-epoch').value = '';
+  document.getElementById('ota-deploy-sha256').value = '';
+  
+  bsOTAModal.show();
+}
+
+function toggleOTAManualInput() {
+  const manualChecked = document.getElementById('ota-manual-check').checked;
+  document.getElementById('ota-manual-fields').classList.toggle('d-none', !manualChecked);
+  const select = document.getElementById('ota-select-release');
+  if (!select.disabled) {
+    select.classList.toggle('opacity-50', manualChecked);
+  }
+}
+
+async function submitOTADeployment(event) {
+  event.preventDefault();
+  const did = document.getElementById('ota-target-did').value;
+  const manualChecked = document.getElementById('ota-manual-check').checked;
+  
+  let url = '';
+  let epoch = 0;
+  let sha256 = '';
+  
+  if (manualChecked) {
+    url = document.getElementById('ota-deploy-url').value.trim();
+    epoch = parseInt(document.getElementById('ota-deploy-epoch').value, 10);
+    sha256 = document.getElementById('ota-deploy-sha256').value.trim();
+    
+    if (!url || isNaN(epoch)) {
+      toast('Please enter URL and Epoch', 'warning');
+      return;
+    }
+  } else {
+    const val = document.getElementById('ota-select-release').value;
+    if (!val) {
+      toast('No firmware selected', 'warning');
+      return;
+    }
+    const parts = val.split('|');
+    url = parts[0];
+    epoch = parseInt(parts[1], 10);
+    sha256 = parts[2];
+  }
+  
+  const btn = document.getElementById('ota-deploy-btn');
+  btn.disabled = true;
+  btn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>Deploying…`;
+  
+  try {
+    await api('POST', `/api/devices/${did}/ota`, { url, epoch, sha256 });
+    bsOTAModal.hide();
+    toast(`OTA command issued successfully to ${did.slice(0, 8)}…`);
+  } catch (e) {
+    toast(`OTA deployment failed: ${e.message}`, 'danger');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = `<i class="bi bi-cloud-arrow-up me-1"></i>Issue OTA Command`;
+  }
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 (async () => {
   try {
@@ -1711,6 +2011,7 @@ function loadAuditLogs() {
     document.getElementById('nav-username').textContent = me.username;
   } catch {}
   loadReleased();
+  loadFirmwareReleases();
 })();
 </script>
 </body>

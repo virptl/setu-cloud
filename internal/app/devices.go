@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/setucore/setu-cloud/internal/api/middleware"
 	"github.com/setucore/setu-cloud/internal/config"
+	"github.com/setucore/setu-cloud/internal/localkey"
 	"github.com/setucore/setu-cloud/internal/mqtt"
 	"github.com/setucore/setu-cloud/internal/registry"
 )
@@ -227,7 +229,7 @@ func Command(db *pgxpool.Pool, pub *mqtt.Publisher, cfg *config.Config) http.Han
 }
 
 // AdoptDevice handles POST /v1/devices/adopt — links a real provisioned device to a user.
-func AdoptDevice(db *pgxpool.Pool, cfg *config.Config, refresher ...DiscoveryRefresher) http.HandlerFunc {
+func AdoptDevice(db *pgxpool.Pool, cfg *config.Config, lk *localkey.Service, refresher ...DiscoveryRefresher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		uid := middleware.UIDFromContext(r.Context())
 		var b struct {
@@ -255,11 +257,11 @@ func AdoptDevice(db *pgxpool.Pool, cfg *config.Config, refresher ...DiscoveryRef
 		}
 
 		// Look up provisioned device by Wi-Fi MAC or BLE MAC (ESP32: BLE = Wi-Fi + 2).
-		var did, pid string
+		var did, pid, invTID string
 		err := db.QueryRow(r.Context(), `
-			SELECT did, pid FROM device_inventory
+			SELECT did, pid, tid FROM device_inventory
 			WHERE (mac=$1 OR ble_mac=$1) AND provisioned_at IS NOT NULL
-		`, mac).Scan(&did, &pid)
+		`, mac).Scan(&did, &pid, &invTID)
 		if err != nil {
 			writeErr(w, 404, "not_found", "device not provisioned or not in inventory")
 			return
@@ -280,6 +282,19 @@ func AdoptDevice(db *pgxpool.Pool, cfg *config.Config, refresher ...DiscoveryRef
 		if err != nil {
 			writeErr(w, 500, "internal_error", err.Error())
 			return
+		}
+
+		// Provision the LAN local-control key and push "klk" so the device can
+		// be driven on-LAN during a cloud outage. Best-effort and off the
+		// request path: a fresh context (the request's is cancelled once we
+		// respond) and errors only logged — the app can retry via
+		// POST /v1/devices/{id}/local-key/provision if the device was offline.
+		if lk != nil {
+			go func() {
+				if err := lk.Provision(context.Background(), invTID, pid, did); err != nil {
+					log.Printf("adopt: localkey provision for did=%s: %v", did, err)
+				}
+			}()
 		}
 
 		dps := reportedDPS(r.Context(), db, cfg.ConsumerTID, did)

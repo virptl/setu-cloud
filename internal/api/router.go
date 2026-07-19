@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/hex"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -16,6 +17,7 @@ import (
 	"github.com/setucore/setu-cloud/internal/google"
 	"github.com/setucore/setu-cloud/internal/iot"
 	"github.com/setucore/setu-cloud/internal/keystore"
+	"github.com/setucore/setu-cloud/internal/localkey"
 	"github.com/setucore/setu-cloud/internal/mqtt"
 	"github.com/setucore/setu-cloud/internal/oauth"
 	"github.com/setucore/setu-cloud/internal/registry"
@@ -42,6 +44,14 @@ func NewRouter(
 
 	reg := registry.New(db, cache)
 	shd := shadow.New(db, cache)
+
+	// LAN local-control key service. The KEK is already validated in main.go
+	// before NewRouter runs, so a decode error here is unreachable; guard anyway.
+	kek, _ := hex.DecodeString(cfg.KeyEncryptionKey)
+	lk, lkErr := localkey.New(db, kek, pub)
+	if lkErr != nil {
+		panic("router: localkey init: " + lkErr.Error())
+	}
 
 	oauthH := oauth.NewHandlers(oauthStore, iotSvc, db, cfg.JWTSecret)
 	alexaH := alexa.NewHandler(iotSvc, oauthStore)
@@ -118,9 +128,11 @@ func NewRouter(
 			r.Use(middleware.AuthUser(cfg.JWTSecret))
 			r.Get("/devices", app.ListDevices(db, reg))
 			r.Post("/devices/claim", app.ClaimDevice(db, cfg, discoveryRefresher))
-			r.Post("/devices/adopt", app.AdoptDevice(db, cfg, discoveryRefresher))
+			r.Post("/devices/adopt", app.AdoptDevice(db, cfg, lk, discoveryRefresher))
 			r.Post("/ble/sign", app.SignBLENonce(db, ks))
 			r.Post("/devices/{id}/command", app.Command(db, pub, cfg))
+			r.Get("/devices/{id}/local-key", app.GetLocalKey(db, cfg, lk))
+			r.Post("/devices/{id}/local-key/provision", app.ProvisionLocalKey(db, cfg, lk))
 			r.Delete("/devices/{id}", app.DeleteDevice(db))
 			r.Post("/auth/delete/otp", app.RequestDeleteOTP(db, cfg))
 			r.Delete("/auth/delete", app.DeleteAccount(db))

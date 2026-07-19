@@ -228,6 +228,12 @@ func (s *Service) setCache(tid string, tk *TenantKey) {
 	s.mu.Unlock()
 }
 
+// SealGCM / OpenGCM expose this package's AES-256-GCM helpers so sibling
+// packages (e.g. localkey) can encrypt small secrets at rest with the same KEK
+// and wire format, without re-implementing the crypto.
+func SealGCM(key, plaintext []byte) ([]byte, error)  { return encryptGCM(key, plaintext) }
+func OpenGCM(key, ciphertext []byte) ([]byte, error) { return decryptGCM(key, ciphertext) }
+
 // encryptGCM encrypts plaintext with AES-256-GCM using the given key.
 // Output format: nonce(12B) ‖ ciphertext ‖ tag(16B).
 func encryptGCM(key, plaintext []byte) ([]byte, error) {

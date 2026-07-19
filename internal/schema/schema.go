@@ -14,12 +14,13 @@ import (
 
 // Artifact is the released schema_version document stored in released_products.
 type Artifact struct {
-	TID         string `json:"tid"`
-	PID         string `json:"pid"`
-	Version     int    `json:"version"`
-	ContentHash string `json:"content_hash"`
-	PublishedAt string `json:"published_at"`
-	DPs         []DP   `json:"dps"`
+	TID         string          `json:"tid"`
+	PID         string          `json:"pid"`
+	Version     int             `json:"version"`
+	ContentHash string          `json:"content_hash"`
+	PublishedAt string          `json:"published_at"`
+	DPs         []DP            `json:"dps"`
+	Panel       json.RawMessage `json:"panel,omitempty"`
 }
 
 // DP is one unified data point: semantic facet + hardware facet.
@@ -136,26 +137,203 @@ const (
 
 // Capability is one controllable/observable datapoint in the app profile.
 type Capability struct {
-	DP    string `json:"dp"`
-	Kind  string `json:"kind"`
-	Label string `json:"label"`
-	Min   *int   `json:"min,omitempty"`
-	Max   *int   `json:"max,omitempty"`
-	Unit  string `json:"unit,omitempty"`
+	DP     string `json:"dp"`
+	Kind   string `json:"kind"`
+	Label  string `json:"label"`
+	Min    *int   `json:"min,omitempty"`
+	Max    *int   `json:"max,omitempty"`
+	Unit   string `json:"unit,omitempty"`
+	Widget string `json:"widget,omitempty"`
+}
+
+type Group struct {
+	Title string `json:"title"`
+	DPs   []int  `json:"dps"`
 }
 
 // Profile is the projected app capability profile.
 type Profile struct {
-	ConsumerType string
-	Icon         string
-	DefaultName  string
-	Capabilities []Capability
-	TileMetricDP string // empty if none
+	ConsumerType     string
+	Icon             string
+	DefaultName      string
+	Capabilities     []Capability
+	TileMetricDP     string // empty if none
+	TileMetricFormat string // empty if none
+	Theme            string
+	Groups           []Group
 }
 
 // AppProfile projects the artifact to the app capability profile (Shared
 // contract B): each DP's semantic facet maps to a capability kind.
 func (a *Artifact) AppProfile() Profile {
+	var panel struct {
+		Display *struct {
+			Icon        string `json:"icon"`
+			DefaultName string `json:"default_name"`
+		} `json:"display"`
+		Controls []struct {
+			DP      int    `json:"dp"`
+			Kind    string `json:"kind"`
+			Label   string `json:"label"`
+			Widget  string `json:"widget"`
+			Primary bool   `json:"primary"`
+			Order   int    `json:"order"`
+			Unit    string `json:"unit"`
+			Min     *int   `json:"min"`
+			Max     *int   `json:"max"`
+			Hidden  bool   `json:"hidden"`
+		} `json:"controls"`
+		TileMetric *struct {
+			DP     int    `json:"dp"`
+			Format string `json:"format"`
+		} `json:"tile_metric"`
+		Groups []struct {
+			Title string `json:"title"`
+			DPs   []int  `json:"dps"`
+		} `json:"groups"`
+		Theme string `json:"theme"`
+	}
+
+	hasPanel := false
+	if len(a.Panel) > 0 && string(a.Panel) != "{}" && string(a.Panel) != "null" {
+		if err := json.Unmarshal(a.Panel, &panel); err == nil {
+			hasPanel = true
+		}
+	}
+
+	if hasPanel {
+		dpMap := make(map[int]DP)
+		for _, dp := range a.DPs {
+			dpMap[dp.DPID] = dp
+		}
+
+		caps := []Capability{}
+		controlDPs := make(map[int]bool)
+		for _, ctrl := range panel.Controls {
+			if ctrl.Hidden {
+				controlDPs[ctrl.DP] = true
+				continue
+			}
+			dp, exists := dpMap[ctrl.DP]
+			if !exists {
+				continue
+			}
+			controlDPs[ctrl.DP] = true
+
+			kind := ctrl.Kind
+			label := ctrl.Label
+			unit := ctrl.Unit
+			min := ctrl.Min
+			max := ctrl.Max
+
+			hCap, hOk := capabilityFor(dp)
+			if kind == "" && hOk {
+				kind = hCap.Kind
+			}
+			if label == "" {
+				if hOk && hCap.Label != "" {
+					label = hCap.Label
+				} else if dp.Name != "" {
+					label = dp.Name
+				} else {
+					label = dp.Code
+				}
+			}
+			if unit == "" && hOk {
+				unit = hCap.Unit
+			}
+			if min == nil && hOk {
+				min = hCap.Min
+			}
+			if max == nil && hOk {
+				max = hCap.Max
+			}
+
+			caps = append(caps, Capability{
+				DP:     strconv.Itoa(ctrl.DP),
+				Kind:   kind,
+				Label:  label,
+				Min:    min,
+				Max:    max,
+				Unit:   unit,
+				Widget: ctrl.Widget,
+			})
+		}
+
+		for _, dp := range a.DPs {
+			if controlDPs[dp.DPID] {
+				continue
+			}
+			if c, ok := capabilityFor(dp); ok {
+				caps = append(caps, c)
+			}
+		}
+
+		var fallbackType, fallbackIcon, fallbackName string
+		has := map[string]bool{}
+		for _, c := range caps {
+			has[c.Kind] = true
+		}
+		switch {
+		case has[KindBrightness] || has[KindColor] || has[KindColorTemp]:
+			fallbackType, fallbackIcon, fallbackName = "lighting", "lightbulb", "Smart Light"
+		case has[KindTargetTemp]:
+			fallbackType, fallbackIcon, fallbackName = "climate", "thermometer", "Smart Thermostat"
+		case has[KindContact] || has[KindMotion] || has[KindTemperature] || has[KindHumidity]:
+			fallbackType, fallbackIcon, fallbackName = "sensors", "sensor", "Smart Sensor"
+		case has[KindPower]:
+			fallbackType, fallbackIcon, fallbackName = "plug", "power_plug", "Smart Plug"
+		default:
+			fallbackType, fallbackIcon, fallbackName = "sensors", "sensor", "Smart Device"
+		}
+
+		icon := fallbackIcon
+		defaultName := fallbackName
+		if panel.Display != nil {
+			if panel.Display.Icon != "" {
+				icon = panel.Display.Icon
+			}
+			if panel.Display.DefaultName != "" {
+				defaultName = panel.Display.DefaultName
+			}
+		}
+
+		tileMetricDP := ""
+		tileMetricFormat := ""
+		if panel.TileMetric != nil && panel.TileMetric.DP != 0 {
+			tileMetricDP = strconv.Itoa(panel.TileMetric.DP)
+			tileMetricFormat = panel.TileMetric.Format
+		} else {
+			if has[KindBrightness] {
+				for _, c := range caps {
+					if c.Kind == KindBrightness {
+						tileMetricDP = c.DP
+						break
+					}
+				}
+			}
+		}
+
+		var groups []Group
+		if len(panel.Groups) > 0 {
+			groups = make([]Group, len(panel.Groups))
+			for i, g := range panel.Groups {
+				groups[i] = Group{Title: g.Title, DPs: g.DPs}
+			}
+		}
+
+		return Profile{
+			ConsumerType:     fallbackType,
+			Icon:             icon,
+			DefaultName:      defaultName,
+			Capabilities:     caps,
+			TileMetricDP:     tileMetricDP,
+			TileMetricFormat: tileMetricFormat,
+			Theme:            panel.Theme,
+			Groups:           groups,
+		}
+	}
+
 	caps := []Capability{}
 	for _, dp := range a.DPs {
 		if c, ok := capabilityFor(dp); ok {
@@ -164,7 +342,6 @@ func (a *Artifact) AppProfile() Profile {
 	}
 
 	p := Profile{Capabilities: caps}
-	// Derive a consumer type + display from the kinds present.
 	has := map[string]bool{}
 	for _, c := range caps {
 		has[c.Kind] = true

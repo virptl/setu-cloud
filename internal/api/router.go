@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/hex"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -33,6 +32,7 @@ func NewRouter(
 	hub *ws.Hub,
 	cfg *config.Config,
 	ks *keystore.Service,
+	lk *localkey.Service,
 	oauthStore *oauth.Store,
 	iotSvc *iot.Service,
 	discoveryRefresher app.DiscoveryRefresher,
@@ -44,14 +44,6 @@ func NewRouter(
 
 	reg := registry.New(db, cache)
 	shd := shadow.New(db, cache)
-
-	// LAN local-control key service. The KEK is already validated in main.go
-	// before NewRouter runs, so a decode error here is unreachable; guard anyway.
-	kek, _ := hex.DecodeString(cfg.KeyEncryptionKey)
-	lk, lkErr := localkey.New(db, kek, pub)
-	if lkErr != nil {
-		panic("router: localkey init: " + lkErr.Error())
-	}
 
 	oauthH := oauth.NewHandlers(oauthStore, iotSvc, db, cfg.JWTSecret)
 	alexaH := alexa.NewHandler(iotSvc, oauthStore)

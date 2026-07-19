@@ -39,14 +39,55 @@ type shdMessage struct {
 	DPS    json.RawMessage `json:"dps"`
 }
 
+// LocalKeyProvisioner re-sends a device's LAN local-control key via the "klk"
+// command. Implemented by *localkey.Service; held here as an interface to avoid
+// an import cycle (localkey imports this package for the Publisher).
+type LocalKeyProvisioner interface {
+	Provision(ctx context.Context, tid, pid, did string) error
+}
+
 // Router dispatches incoming MQTT messages to the appropriate handlers.
 type Router struct {
 	db         *pgxpool.Pool
 	cache      *redis.Client
 	registry   *registry.Service
 	shadow     *shadow.Service
-	workers    chan struct{} // semaphore — limits concurrent DB writers
-	tenantSeen sync.Map      // tid -> struct{}: cache of usernames known to be tenants
+	localKey   LocalKeyProvisioner // optional; nil disables klk auto-retry
+	workers    chan struct{}       // semaphore — limits concurrent DB writers
+	tenantSeen sync.Map            // tid -> struct{}: cache of usernames known to be tenants
+}
+
+// SetLocalKey wires the LAN local-key service in after construction (the Router
+// is built before the MQTT client/publisher it depends on).
+func (r *Router) SetLocalKey(lk LocalKeyProvisioner) { r.localKey = lk }
+
+// ensureLocalKeyOnline re-sends "klk" when an adopted device comes online but
+// has never confirmed (acked) its LAN key — self-healing the case where the
+// original push on adopt was lost because the device was still connecting.
+// Fire-and-forget; a device that has already acked a klk is skipped.
+func (r *Router) ensureLocalKeyOnline(ctx context.Context, tid, did string) {
+	if r.localKey == nil {
+		return
+	}
+	var adopted, acked bool
+	if err := r.db.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM app_devices WHERE did=$1)`, did).Scan(&adopted); err != nil || !adopted {
+		return
+	}
+	if err := r.db.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM commands WHERE did=$1 AND command_type='klk' AND status='acked_ok')`,
+		did).Scan(&acked); err != nil || acked {
+		return
+	}
+	var pid string
+	if r.db.QueryRow(ctx, `SELECT pid FROM devices WHERE tid=$1 AND did=$2`, tid, did).Scan(&pid); pid == "" {
+		return
+	}
+	go func() {
+		if err := r.localKey.Provision(context.Background(), tid, pid, did); err != nil {
+			log.Printf("mqtt: klk auto-retry for did=%s: %v", did, err)
+		}
+	}()
 }
 
 func NewRouter(db *pgxpool.Pool, cache *redis.Client) *Router {
@@ -209,6 +250,7 @@ func (r *Router) handleReg(ctx context.Context, tid, did string, env envelope) {
 	r.updateDiag(ctx, tid, did, d.Diag)
 	r.storeEvent(ctx, tid, did, "reg", env.D)
 	r.publishWS(ctx, tid, wsEvent{Type: "reg", DID: did, TID: tid, T: env.T, Data: env.D})
+	r.ensureLocalKeyOnline(ctx, tid, did)
 }
 
 func (r *Router) handleBoo(ctx context.Context, tid, did string, env envelope) {
@@ -227,6 +269,7 @@ func (r *Router) handleBoo(ctx context.Context, tid, did string, env envelope) {
 	r.updateDiag(ctx, tid, did, d.Diag)
 	r.storeEvent(ctx, tid, did, "boo", env.D)
 	r.publishWS(ctx, tid, wsEvent{Type: "boo", DID: did, TID: tid, T: env.T, Data: env.D})
+	r.ensureLocalKeyOnline(ctx, tid, did)
 }
 
 func (r *Router) handleRpt(ctx context.Context, tid, did string, env envelope) {

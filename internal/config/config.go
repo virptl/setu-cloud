@@ -14,11 +14,12 @@ type Config struct {
 
 	JWTSecret string
 
-	MQTTBrokerURL  string
-	MQTTClientID   string
-	MQTTUsername   string
-	MQTTPassword   string
-	MQTTCACertFile string
+	MQTTBrokerURL       string
+	MQTTClientID        string
+	MQTTSharedGroup     string
+	MQTTUsername        string
+	MQTTPassword        string
+	MQTTCACertFile      string
 
 	// URI sent to devices in ZTP response — may differ from MQTTBrokerURL
 	DeviceMQTTBrokerURI string
@@ -68,6 +69,7 @@ func Load() (*Config, error) {
 		JWTSecret:           must("JWT_SECRET"),
 		MQTTBrokerURL:       must("MQTT_BROKER_URL"),
 		MQTTClientID:        env("MQTT_CLIENT_ID", "setu-cloud"),
+		MQTTSharedGroup:     env("MQTT_SHARED_GROUP", ""),
 		MQTTUsername:        env("MQTT_USERNAME", ""),
 		MQTTPassword:        env("MQTT_PASSWORD", ""),
 		MQTTCACertFile:      env("MQTT_CA_CERT_FILE", ""),
@@ -93,6 +95,12 @@ func Load() (*Config, error) {
 
 	if c.DeviceMQTTBrokerURI == "" {
 		c.DeviceMQTTBrokerURI = c.MQTTBrokerURL
+	}
+
+	if instanceID := os.Getenv("INSTANCE_ID"); instanceID != "" {
+		c.MQTTClientID = fmt.Sprintf("%s-%s", c.MQTTClientID, instanceID)
+	} else if hostname, err := os.Hostname(); err == nil && hostname != "" && os.Getenv("MQTT_CLIENT_ID") == "" {
+		c.MQTTClientID = fmt.Sprintf("%s-%s", c.MQTTClientID, hostname)
 	}
 
 	if c.SMTPFrom == "" {

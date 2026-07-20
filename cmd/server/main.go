@@ -18,6 +18,7 @@ import (
 	"github.com/setucore/setu-cloud/internal/db"
 	"github.com/setucore/setu-cloud/internal/iot"
 	"github.com/setucore/setu-cloud/internal/keystore"
+	"github.com/setucore/setu-cloud/internal/localkey"
 	internalmqtt "github.com/setucore/setu-cloud/internal/mqtt"
 	"github.com/setucore/setu-cloud/internal/oauth"
 	"github.com/setucore/setu-cloud/internal/proactive"
@@ -74,7 +75,7 @@ func main() {
 		cfg.MQTTPassword,
 		cfg.MQTTCACertFile,
 		internalmqtt.WithOnConnect(func(c pahomqtt.Client) {
-			internalmqtt.Subscribe(c, router)
+			internalmqtt.SubscribeWithGroup(c, router, cfg.MQTTSharedGroup)
 		}),
 	)
 	if err != nil {
@@ -88,6 +89,17 @@ func main() {
 
 	// ── Voice assistant services ──────────────────────────────────────────────
 	pub := internalmqtt.NewPublisher(mqttClient)
+
+	// LAN local-control key service (shared by the HTTP + MQTT routers). Wire it
+	// into the MQTT router so a device that comes online without a confirmed key
+	// (e.g. the klk push on adopt was lost while it was still connecting) gets it
+	// re-sent automatically on its reg/boo.
+	lk, err := localkey.New(pool, kek, pub)
+	if err != nil {
+		log.Fatalf("localkey: %v", err)
+	}
+	router.SetLocalKey(lk)
+
 	oauthStore := oauth.NewStore(pool)
 	iotSvc := iot.New(pool, redisClient, pub, cfg)
 	proactiveSvc := proactive.New(redisClient, oauthStore, iotSvc, cfg)
@@ -120,7 +132,7 @@ func main() {
 	}()
 
 	// ── HTTP server ───────────────────────────────────────────────────────────
-	handler := api.NewRouter(pool, redisClient, pub, hub, cfg, ks, oauthStore, iotSvc, proactiveSvc)
+	handler := api.NewRouter(pool, redisClient, pub, hub, cfg, ks, lk, oauthStore, iotSvc, proactiveSvc)
 
 	srv := &http.Server{
 		Addr:         cfg.ListenAddr,

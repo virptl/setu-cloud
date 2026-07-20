@@ -15,12 +15,18 @@ import (
 
 // Capability describes a single controllable datapoint on a device.
 type Capability struct {
-	DP    string `json:"dp"`
-	Kind  string `json:"kind"` // power | brightness | color_temp | color | target_temp
-	Label string `json:"label"`
-	Min   *int   `json:"min,omitempty"`
-	Max   *int   `json:"max,omitempty"`
-	Unit  string `json:"unit,omitempty"`
+	DP     string `json:"dp"`
+	Kind   string `json:"kind"` // power | brightness | color_temp | color | target_temp
+	Label  string `json:"label"`
+	Min    *int   `json:"min,omitempty"`
+	Max    *int   `json:"max,omitempty"`
+	Unit   string `json:"unit,omitempty"`
+	Widget string `json:"widget,omitempty"`
+}
+
+type GroupConfig struct {
+	Title string `json:"title"`
+	DPs   []int  `json:"dps"`
 }
 
 // ProductProfile is the capability profile the app renders the control sheet from.
@@ -31,6 +37,8 @@ type ProductProfile struct {
 	Capabilities  []Capability   `json:"capabilities"`
 	TileMetric    *TileMetric    `json:"tile_metric,omitempty"`
 	SchemaVersion *int           `json:"schema_version,omitempty"`
+	Theme         string         `json:"theme,omitempty"`
+	Groups        []GroupConfig  `json:"groups,omitempty"`
 }
 
 type ProfileDisplay struct {
@@ -255,7 +263,14 @@ func profileFromReleasedSchema(r *http.Request, db *pgxpool.Pool, pid string) (P
 
 	caps := make([]Capability, 0, len(p.Capabilities))
 	for _, c := range p.Capabilities {
-		caps = append(caps, Capability{DP: c.DP, Kind: c.Kind, Label: c.Label, Min: c.Min, Max: c.Max, Unit: c.Unit})
+		caps = append(caps, Capability{DP: c.DP, Kind: c.Kind, Label: c.Label, Min: c.Min, Max: c.Max, Unit: c.Unit, Widget: c.Widget})
+	}
+	var groups []GroupConfig
+	if len(p.Groups) > 0 {
+		groups = make([]GroupConfig, len(p.Groups))
+		for i, g := range p.Groups {
+			groups[i] = GroupConfig{Title: g.Title, DPs: g.DPs}
+		}
 	}
 	prof := ProductProfile{
 		PID:           pid,
@@ -263,9 +278,15 @@ func profileFromReleasedSchema(r *http.Request, db *pgxpool.Pool, pid string) (P
 		Display:       ProfileDisplay{Icon: p.Icon, DefaultName: p.DefaultName},
 		Capabilities:  caps,
 		SchemaVersion: &version,
+		Theme:         p.Theme,
+		Groups:        groups,
 	}
 	if p.TileMetricDP != "" {
-		prof.TileMetric = &TileMetric{DP: p.TileMetricDP, Format: "{value}%"}
+		fmtStr := p.TileMetricFormat
+		if fmtStr == "" {
+			fmtStr = "{value}%"
+		}
+		prof.TileMetric = &TileMetric{DP: p.TileMetricDP, Format: fmtStr}
 	}
 	etag := `"` + contentHash + `"`
 	return prof, etag, true

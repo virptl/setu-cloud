@@ -52,6 +52,13 @@ func AuthUser(secret string) func(http.Handler) http.Handler {
 	}
 }
 
+// WithUserContext injects tid, uid, and role into context for testing and internal calls.
+func WithUserContext(ctx context.Context, tid, uid, role string) context.Context {
+	ctx = context.WithValue(ctx, tidKey, tid)
+	ctx = context.WithValue(ctx, uidKey, uid)
+	return context.WithValue(ctx, roleKey, role)
+}
+
 // UIDFromContext extracts the user ID injected by AuthUser middleware.
 func UIDFromContext(ctx context.Context) string {
 	uid, _ := ctx.Value(uidKey).(string)

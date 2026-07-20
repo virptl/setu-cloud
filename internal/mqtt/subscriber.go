@@ -9,10 +9,22 @@ import (
 // Subscribe attaches the router handlers to the MQTT broker.
 // Called once after the client connects.
 func Subscribe(client pahomqtt.Client, router *Router) {
+	SubscribeWithGroup(client, router, "")
+}
+
+// SubscribeWithGroup attaches router handlers, optionally using MQTT 5.0 / EMQX
+// shared subscriptions ($share/{group}/topic) to load balance telemetry
+// processing across multiple setu-cloud server instances.
+func SubscribeWithGroup(client pahomqtt.Client, router *Router, sharedGroup string) {
+	telemetryPrefix := ""
+	if sharedGroup != "" {
+		telemetryPrefix = "$share/" + sharedGroup + "/"
+	}
+
 	subs := map[string]pahomqtt.MessageHandler{
-		// Device telemetry
-		"setu/+/+/+/up":  router.HandleUp,
-		"setu/+/+/+/shd": router.HandleShd,
+		// Device telemetry — use shared subscription if group is set
+		telemetryPrefix + "setu/+/+/+/up":  router.HandleUp,
+		telemetryPrefix + "setu/+/+/+/shd": router.HandleShd,
 
 		// EMQX system events — fired on every client connect/disconnect
 		// regardless of whether the device publishes any data.
@@ -26,7 +38,7 @@ func Subscribe(client pahomqtt.Client, router *Router) {
 		tok.Wait()
 		if err := tok.Error(); err != nil {
 			// $SYS topics may not be enabled on all brokers — warn but don't fatal.
-			if topic[0] == '$' {
+			if len(topic) > 0 && topic[0] == '$' && sharedGroup == "" {
 				log.Printf("mqtt: WARNING — could not subscribe to %s: %v (EMQX $SYS events disabled?)", topic, err)
 			} else {
 				log.Fatalf("mqtt subscribe %s: %v", topic, err)

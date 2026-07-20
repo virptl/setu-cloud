@@ -17,6 +17,7 @@ import (
 	"github.com/setucore/setu-cloud/internal/iot"
 	"github.com/setucore/setu-cloud/internal/keystore"
 	"github.com/setucore/setu-cloud/internal/localkey"
+	"github.com/setucore/setu-cloud/internal/metrics"
 	"github.com/setucore/setu-cloud/internal/mqtt"
 	"github.com/setucore/setu-cloud/internal/oauth"
 	"github.com/setucore/setu-cloud/internal/registry"
@@ -41,6 +42,7 @@ func NewRouter(
 	r.Use(chimw.RealIP)
 	r.Use(chimw.Logger)
 	r.Use(chimw.Recoverer)
+	r.Use(metrics.Middleware)
 
 	reg := registry.New(db, cache)
 	shd := shadow.New(db, cache)
@@ -49,8 +51,9 @@ func NewRouter(
 	alexaH := alexa.NewHandler(iotSvc, oauthStore)
 	googleH := google.NewHandler(iotSvc, oauthStore)
 
-	// ── Health ────────────────────────────────────────────────────────────────
+	// ── Health & Metrics ──────────────────────────────────────────────────────
 	r.Get("/health", handlers.Health(db, cache))
+	r.Get("/metrics", metrics.Handler())
 
 	// ── Auth ──────────────────────────────────────────────────────────────────
 	r.Post("/auth/token", handlers.Token(db, cfg.JWTSecret))
@@ -130,11 +133,24 @@ func NewRouter(
 			r.Delete("/auth/delete", app.DeleteAccount(db))
 			r.Get("/linked-accounts", app.LinkedAccounts(db))
 			r.Get("/products/{pid}/profile", app.GetProductProfile(db))
-			r.Get("/rooms", app.Rooms())
-			r.Get("/scenes", app.Scenes())
-			r.Get("/automations", app.Automations())
-			r.Post("/scenes/{id}/run", app.RunScene())
-			r.Patch("/automations/{id}", app.PatchAutomation())
+			r.Get("/rooms", app.Rooms(db))
+			r.Post("/rooms", app.CreateRoom(db))
+			r.Delete("/rooms/{id}", app.DeleteRoom(db))
+
+			r.Get("/groups", app.Groups(db))
+			r.Post("/groups", app.CreateGroup(db))
+			r.Post("/groups/{id}/command", app.GroupCommand(db, pub, cfg))
+			r.Delete("/groups/{id}", app.DeleteGroup(db))
+
+			r.Get("/scenes", app.Scenes(db))
+			r.Post("/scenes", app.CreateScene(db))
+			r.Post("/scenes/{id}/run", app.RunScene(db, pub, cfg))
+			r.Delete("/scenes/{id}", app.DeleteScene(db))
+
+			r.Get("/automations", app.Automations(db))
+			r.Post("/automations", app.CreateAutomation(db))
+			r.Patch("/automations/{id}", app.PatchAutomation(db))
+			r.Delete("/automations/{id}", app.DeleteAutomation(db))
 		})
 	})
 

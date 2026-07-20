@@ -1,5 +1,8 @@
 .env
+.env.bak*
 bin/
+setu-cloud
+*.out
 *.pem
 *.key
 go.sum

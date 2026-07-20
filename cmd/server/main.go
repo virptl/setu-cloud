@@ -75,7 +75,7 @@ func main() {
 		cfg.MQTTPassword,
 		cfg.MQTTCACertFile,
 		internalmqtt.WithOnConnect(func(c pahomqtt.Client) {
-			internalmqtt.Subscribe(c, router)
+			internalmqtt.SubscribeWithGroup(c, router, cfg.MQTTSharedGroup)
 		}),
 	)
 	if err != nil {

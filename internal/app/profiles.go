@@ -29,16 +29,19 @@ type GroupConfig struct {
 	DPs   []int  `json:"dps"`
 }
 
+type AssistantConfig = schema.AssistantConfig
+
 // ProductProfile is the capability profile the app renders the control sheet from.
 type ProductProfile struct {
-	PID           string         `json:"pid"`
-	ConsumerType  string         `json:"consumer_type"`
-	Display       ProfileDisplay `json:"display"`
-	Capabilities  []Capability   `json:"capabilities"`
-	TileMetric    *TileMetric    `json:"tile_metric,omitempty"`
-	SchemaVersion *int           `json:"schema_version,omitempty"`
-	Theme         string         `json:"theme,omitempty"`
-	Groups        []GroupConfig  `json:"groups,omitempty"`
+	PID           string           `json:"pid"`
+	ConsumerType  string           `json:"consumer_type"`
+	Display       ProfileDisplay   `json:"display"`
+	Capabilities  []Capability     `json:"capabilities"`
+	TileMetric    *TileMetric      `json:"tile_metric,omitempty"`
+	SchemaVersion *int             `json:"schema_version,omitempty"`
+	Theme         string           `json:"theme,omitempty"`
+	Groups        []GroupConfig    `json:"groups,omitempty"`
+	Assistant     *AssistantConfig `json:"assistant,omitempty"`
 }
 
 type ProfileDisplay struct {
@@ -67,6 +70,7 @@ var productProfiles = map[string]ProductProfile{
 			{DP: "5", Kind: "color", Label: "Color"},
 		},
 		TileMetric: &TileMetric{DP: "2", Format: "{value}%"},
+		Assistant:  &AssistantConfig{Enabled: true, Alexa: true, Google: true},
 	},
 	"light1": {
 		PID:          "light1",
@@ -77,6 +81,7 @@ var productProfiles = map[string]ProductProfile{
 			{DP: "2", Kind: "brightness", Label: "Brightness", Min: ip(10), Max: ip(100), Unit: "%"},
 		},
 		TileMetric: &TileMetric{DP: "2", Format: "{value}%"},
+		Assistant:  &AssistantConfig{Enabled: true, Alexa: true, Google: true},
 	},
 	"th1": {
 		PID:          "th1",
@@ -86,6 +91,7 @@ var productProfiles = map[string]ProductProfile{
 			{DP: "1", Kind: "power", Label: "Power"},
 			{DP: "2", Kind: "target_temp", Label: "Target Temperature", Min: ip(16), Max: ip(30), Unit: "°C"},
 		},
+		Assistant: &AssistantConfig{Enabled: true, Alexa: true, Google: true},
 	},
 	"sp1": {
 		PID:          "sp1",
@@ -94,6 +100,7 @@ var productProfiles = map[string]ProductProfile{
 		Capabilities: []Capability{
 			{DP: "1", Kind: "power", Label: "Power"},
 		},
+		Assistant: &AssistantConfig{Enabled: true, Alexa: true, Google: true},
 	},
 	"gen1": {
 		PID:          "gen1",
@@ -102,6 +109,7 @@ var productProfiles = map[string]ProductProfile{
 		Capabilities: []Capability{
 			{DP: "1", Kind: "power", Label: "Power"},
 		},
+		Assistant: &AssistantConfig{Enabled: false, Alexa: false, Google: false},
 	},
 }
 
@@ -171,6 +179,67 @@ func ResolveCapabilities(ctx context.Context, db *pgxpool.Pool, pid string, vers
 	}
 
 	return capsForPID(pid)
+}
+
+// ResolveAssistantConfig returns the AssistantConfig for a pid, first checking released_products DB, then falling back to static map.
+func ResolveAssistantConfig(ctx context.Context, db *pgxpool.Pool, pid string) *AssistantConfig {
+	if db != nil {
+		var raw []byte
+		err := db.QueryRow(ctx,
+			`SELECT schema_json FROM released_products
+			  WHERE pid=$1 AND retired_at IS NULL ORDER BY version DESC LIMIT 1`, pid).Scan(&raw)
+		if err == nil {
+			art, perr := schema.Parse(raw)
+			if perr == nil {
+				p := art.AppProfile()
+				if p.Assistant != nil {
+					return p.Assistant
+				}
+			}
+		}
+	}
+	if pp, ok := productProfiles[pid]; ok {
+		return pp.Assistant
+	}
+	return productProfiles["gen1"].Assistant
+}
+
+// ResolveConsumerType returns the ConsumerType for a pid, first checking released_products DB, then falling back to static map.
+func ResolveConsumerType(ctx context.Context, db *pgxpool.Pool, pid string) string {
+	if db != nil {
+		var raw []byte
+		err := db.QueryRow(ctx,
+			`SELECT schema_json FROM released_products
+			  WHERE pid=$1 AND retired_at IS NULL ORDER BY version DESC LIMIT 1`, pid).Scan(&raw)
+		if err == nil {
+			art, perr := schema.Parse(raw)
+			if perr == nil {
+				p := art.AppProfile()
+				if p.ConsumerType != "" {
+					return p.ConsumerType
+				}
+			}
+		}
+	}
+	return deviceTypeForPID(pid)
+}
+
+// IsAssistantSupported returns true if the specified pid supports the given assistant platform ("alexa", "google", or "any").
+func IsAssistantSupported(ctx context.Context, db *pgxpool.Pool, pid string, platform string) bool {
+	cfg := ResolveAssistantConfig(ctx, db, pid)
+	if cfg == nil || !cfg.Enabled {
+		return false
+	}
+	switch platform {
+	case "alexa":
+		return cfg.Alexa
+	case "google":
+		return cfg.Google
+	case "", "any":
+		return cfg.Alexa || cfg.Google
+	default:
+		return false
+	}
 }
 
 // deviceTypeForPID maps a product ID to its consumer type string.
@@ -280,6 +349,7 @@ func profileFromReleasedSchema(r *http.Request, db *pgxpool.Pool, pid string) (P
 		SchemaVersion: &version,
 		Theme:         p.Theme,
 		Groups:        groups,
+		Assistant:     p.Assistant,
 	}
 	if p.TileMetricDP != "" {
 		fmtStr := p.TileMetricFormat

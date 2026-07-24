@@ -113,10 +113,14 @@ func (s *Service) handleEvent(ctx context.Context, rawMsg string) {
 	for _, p := range platforms {
 		switch p.Platform {
 		case "alexa":
-			pushAlexaChangeReport(ctx, ev.DID, pid, p.AlexaBearerToken, dps)
+			if _, _, ok := s.iotSvc.OwnsDeviceForAssistant(ctx, ownerID, ev.DID, "alexa"); ok {
+				pushAlexaChangeReport(ctx, ev.DID, pid, p.AlexaBearerToken, dps)
+			}
 		case "google":
 			if saToken != "" {
-				pushGoogleReportState(ctx, ev.DID, pid, ownerID, saToken, dps)
+				if _, _, ok := s.iotSvc.OwnsDeviceForAssistant(ctx, ownerID, ev.DID, "google"); ok {
+					pushGoogleReportState(ctx, ev.DID, pid, ownerID, saToken, dps)
+				}
 			}
 		}
 	}
@@ -125,7 +129,7 @@ func (s *Service) handleEvent(ctx context.Context, rawMsg string) {
 // pushAlexaDiscoveryRefresh logs the intent; full AddOrUpdateReport is out of scope for MVP.
 // Alexa will re-discover automatically when the user opens the Alexa app.
 func (s *Service) pushAlexaDiscoveryRefresh(ctx context.Context, userID, _ string) {
-	devices, _ := s.iotSvc.ListDevicesForUser(ctx, userID)
+	devices, _ := s.iotSvc.ListDevicesForAssistant(ctx, userID, "alexa")
 	log.Printf("alexa discovery refresh: user=%s devices=%d", userID, len(devices))
 }
 

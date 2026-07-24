@@ -343,3 +343,57 @@ func authorizeHTML(clientID, redirectURI, state, scope, errMsg string) string {
 </body>
 </html>`
 }
+
+// PrivacyPolicy renders the static Privacy Policy page.
+func (h *Handlers) PrivacyPolicy(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write([]byte(privacyHTML()))
+}
+
+func privacyHTML() string {
+	return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SetuIoT — Privacy Policy</title>
+<style>
+  body{font-family:system-ui,sans-serif;line-height:1.6;background:#f7f8fa;color:#333;margin:0;padding:24px}
+  .container{background:#fff;border-radius:12px;box-shadow:0 2px 16px rgba(0,0,0,.05);padding:40px;max-width:680px;margin:40px auto}
+  h1{font-size:2rem;margin-top:0;color:#111}
+  h2{font-size:1.25rem;margin-top:24px;color:#222;border-bottom:1px solid #eee;padding-bottom:8px}
+  p, li{font-size:.95rem;color:#555}
+  ul{padding-left:20px}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Privacy Policy</h1>
+  <p>Last updated: July 2026</p>
+  <p>At SetuIoT, we are committed to protecting your privacy. This Privacy Policy describes how we collect, use, and share information when you use our SetuIoT platform, mobile applications, and voice integrations (such as Amazon Alexa and Google Assistant).</p>
+  
+  <h2>1. Information We Collect</h2>
+  <p>To provide our smart home services, we collect:</p>
+  <ul>
+    <li><strong>Account Information:</strong> Your email address and password when you register.</li>
+    <li><strong>Device Information:</strong> Device IDs, online status, configuration profiles, and state data of devices connected to your account.</li>
+    <li><strong>Voice Control Data:</strong> When you control your devices via voice assistants (Alexa or Google Assistant), we receive control commands (such as "turn on") to execute on your devices. We do not store voice recordings.</li>
+  </ul>
+
+  <h2>2. How We Use Information</h2>
+  <p>We use the collected information to:</p>
+  <ul>
+    <li>Provide, operate, and maintain our smart home services.</li>
+    <li>Process control commands and synchronize device states across your mobile application and voice platforms.</li>
+    <li>Communicate with you regarding account alerts, security updates, and service announcements.</li>
+  </ul>
+
+  <h2>3. Information Sharing</h2>
+  <p>We do not sell your personal data. We only share information with voice assistant platforms (Amazon and Google) to the extent necessary to execute your voice control directives and report device statuses as requested by you.</p>
+
+  <h2>4. Contact Us</h2>
+  <p>If you have any questions about this Privacy Policy, please contact us at support@setuiot.com.</p>
+</div>
+</body>
+</html>`
+}

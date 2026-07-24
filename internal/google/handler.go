@@ -96,7 +96,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleSync(w http.ResponseWriter, r *http.Request, requestID string, info *oauth.TokenInfo) {
-	devices, err := h.iot.ListDevicesForUser(r.Context(), info.UserID)
+	devices, err := h.iot.ListDevicesForAssistant(r.Context(), info.UserID, "google")
 	if err != nil {
 		log.Printf("google sync uid=%s: %v", info.UserID, err)
 		devices = nil
@@ -104,8 +104,8 @@ func (h *Handler) handleSync(w http.ResponseWriter, r *http.Request, requestID s
 
 	var googleDevices []DeviceDef
 	for _, d := range devices {
-		caps := app.CapsForPID(d.PID)
-		consumerType := app.DeviceTypeForPID(d.PID)
+		caps := app.ResolveCapabilities(r.Context(), h.iot.DB(), d.PID, 0)
+		consumerType := app.ResolveConsumerType(r.Context(), h.iot.DB(), d.PID)
 		googleDevices = append(googleDevices, BuildDeviceDef(d.DID, d.PID, d.Name, consumerType, caps))
 	}
 	if googleDevices == nil {
@@ -127,7 +127,7 @@ func (h *Handler) handleQuery(w http.ResponseWriter, r *http.Request, requestID 
 
 	deviceStates := map[string]any{}
 	for _, d := range payload.Devices {
-		tid, pid, ok := h.iot.OwnsDevice(r.Context(), info.UserID, d.ID)
+		tid, pid, ok := h.iot.OwnsDeviceForAssistant(r.Context(), info.UserID, d.ID, "google")
 		if !ok {
 			deviceStates[d.ID] = map[string]any{"status": "ERROR", "errorCode": "deviceNotFound"}
 			continue
@@ -138,7 +138,7 @@ func (h *Handler) handleQuery(w http.ResponseWriter, r *http.Request, requestID 
 			continue
 		}
 		dps := h.iot.GetReportedDPS(r.Context(), tid, d.ID)
-		caps := app.CapsForPID(pid)
+		caps := app.ResolveCapabilities(r.Context(), h.iot.DB(), pid, 0)
 		deviceStates[d.ID] = DPSToState(caps, dps, true)
 	}
 
@@ -155,10 +155,10 @@ func (h *Handler) handleExecute(w http.ResponseWriter, r *http.Request, requestI
 	json.Unmarshal(rawPayload, &payload)
 
 	type commandResult struct {
-		IDs    []string       `json:"ids"`
-		Status string         `json:"status"`
-		States map[string]any `json:"states,omitempty"`
-		ErrorCode string      `json:"errorCode,omitempty"`
+		IDs       []string       `json:"ids"`
+		Status    string         `json:"status"`
+		States    map[string]any `json:"states,omitempty"`
+		ErrorCode string         `json:"errorCode,omitempty"`
 	}
 
 	var results []commandResult
@@ -170,7 +170,7 @@ func (h *Handler) handleExecute(w http.ResponseWriter, r *http.Request, requestI
 		var lastError string
 
 		for _, dev := range cmd.Devices {
-			tid, pid, ok := h.iot.OwnsDevice(r.Context(), info.UserID, dev.ID)
+			tid, pid, ok := h.iot.OwnsDeviceForAssistant(r.Context(), info.UserID, dev.ID, "google")
 			if !ok {
 				errorIDs = append(errorIDs, dev.ID)
 				lastError = "deviceNotFound"
@@ -180,7 +180,7 @@ func (h *Handler) handleExecute(w http.ResponseWriter, r *http.Request, requestI
 				offlineIDs = append(offlineIDs, dev.ID)
 				continue
 			}
-			caps := app.CapsForPID(pid)
+			caps := app.ResolveCapabilities(r.Context(), h.iot.DB(), pid, 0)
 			for _, exec := range cmd.Execution {
 				dps := ExecuteCommandToDPS(exec.Command, exec.Params, caps)
 				if len(dps) == 0 {

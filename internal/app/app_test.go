@@ -34,3 +34,27 @@ func TestSignBLENonce_InvalidRole(t *testing.T) {
 		t.Errorf("expected status %d for unauthorized role, got %d", http.StatusBadRequest, rec.Code)
 	}
 }
+
+func TestIsAssistantSupported(t *testing.T) {
+	// Devices configured with assistant config (e.g. light-rgbcw, light1, th1, sp1)
+	if !app.IsAssistantSupported(nil, nil, "light-rgbcw", "alexa") {
+		t.Errorf("Expected light-rgbcw to support Alexa")
+	}
+	if !app.IsAssistantSupported(nil, nil, "light-rgbcw", "google") {
+		t.Errorf("Expected light-rgbcw to support Google")
+	}
+	if !app.IsAssistantSupported(nil, nil, "sp1", "alexa") {
+		t.Errorf("Expected sp1 to support Alexa")
+	}
+
+	// Devices WITHOUT assistant config (e.g. gen1 or unknown PID)
+	if app.IsAssistantSupported(nil, nil, "gen1", "alexa") {
+		t.Errorf("Expected gen1 NOT to support Alexa")
+	}
+	if app.IsAssistantSupported(nil, nil, "gen1", "google") {
+		t.Errorf("Expected gen1 NOT to support Google")
+	}
+	if app.IsAssistantSupported(nil, nil, "unknown_pid", "alexa") {
+		t.Errorf("Expected unknown_pid NOT to support Alexa")
+	}
+}

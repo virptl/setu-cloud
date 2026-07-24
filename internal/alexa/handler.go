@@ -194,7 +194,7 @@ func (h *Handler) handleDiscovery(w http.ResponseWriter, r *http.Request, token 
 		return
 	}
 
-	devices, err := h.iot.ListDevicesForUser(r.Context(), info.UserID)
+	devices, err := h.iot.ListDevicesForAssistant(r.Context(), info.UserID, "alexa")
 	if err != nil {
 		log.Printf("alexa discovery uid=%s: %v", info.UserID, err)
 		devices = nil
@@ -202,8 +202,8 @@ func (h *Handler) handleDiscovery(w http.ResponseWriter, r *http.Request, token 
 
 	var endpoints []EndpointDef
 	for _, d := range devices {
-		caps := app.CapsForPID(d.PID)
-		consumerType := app.DeviceTypeForPID(d.PID)
+		caps := app.ResolveCapabilities(r.Context(), h.iot.DB(), d.PID, 0)
+		consumerType := app.ResolveConsumerType(r.Context(), h.iot.DB(), d.PID)
 		endpoints = append(endpoints, EndpointDef{
 			EndpointID:        d.DID,
 			ManufacturerName:  "SetuIoT",
@@ -227,7 +227,7 @@ func (h *Handler) handleDiscovery(w http.ResponseWriter, r *http.Request, token 
 }
 
 func (h *Handler) handleReportState(w http.ResponseWriter, r *http.Request, info *oauth.TokenInfo, did, correlationToken, token string) {
-	tid, pid, ok := h.iot.OwnsDevice(r.Context(), info.UserID, did)
+	tid, pid, ok := h.iot.OwnsDeviceForAssistant(r.Context(), info.UserID, did, "alexa")
 	if !ok {
 		writeJSON(w, errorResponse(correlationToken, did, token, "NO_SUCH_ENDPOINT", "device not found"))
 		return
@@ -237,14 +237,14 @@ func (h *Handler) handleReportState(w http.ResponseWriter, r *http.Request, info
 		return
 	}
 	dps := h.iot.GetReportedDPS(r.Context(), tid, did)
-	caps := app.CapsForPID(pid)
+	caps := app.ResolveCapabilities(r.Context(), h.iot.DB(), pid, 0)
 	ts := time.Now().UTC().Format(time.RFC3339)
 	props := DPSToProperties(caps, dps, ts)
 	writeJSON(w, stateReport(correlationToken, did, token, props))
 }
 
 func (h *Handler) handleControl(w http.ResponseWriter, r *http.Request, info *oauth.TokenInfo, did, ns, name string, payload json.RawMessage, correlationToken, token string) {
-	tid, pid, ok := h.iot.OwnsDevice(r.Context(), info.UserID, did)
+	tid, pid, ok := h.iot.OwnsDeviceForAssistant(r.Context(), info.UserID, did, "alexa")
 	if !ok {
 		writeJSON(w, errorResponse(correlationToken, did, token, "NO_SUCH_ENDPOINT", "device not found"))
 		return
@@ -254,7 +254,7 @@ func (h *Handler) handleControl(w http.ResponseWriter, r *http.Request, info *oa
 		return
 	}
 
-	caps := app.CapsForPID(pid)
+	caps := app.ResolveCapabilities(r.Context(), h.iot.DB(), pid, 0)
 	dps, err := DirectiveToDPS(ns, name, payload, caps)
 	if err != nil {
 		writeJSON(w, errorResponse(correlationToken, did, token, "INVALID_DIRECTIVE", err.Error()))

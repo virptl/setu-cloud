@@ -92,6 +92,52 @@ func TestAppProfileAuthoredConfigFallback(t *testing.T) {
 	}
 }
 
+func TestAssistantConfig(t *testing.T) {
+	// 1. Artifact with top-level assistant config
+	art1 := Artifact{
+		TID: "tenant-1",
+		PID: "prod-1",
+		Assistant: &AssistantConfig{
+			Enabled: true,
+			Alexa:   true,
+			Google:  false,
+		},
+	}
+	p1 := art1.AppProfile()
+	if p1.Assistant == nil || !p1.Assistant.Enabled || !p1.Assistant.Alexa || p1.Assistant.Google {
+		t.Errorf("Expected Alexa=true, Google=false in p1.Assistant, got %+v", p1.Assistant)
+	}
+
+	// 2. Artifact with panel assistant config (overrides)
+	art2 := Artifact{
+		TID: "tenant-1",
+		PID: "prod-2",
+		Assistant: &AssistantConfig{
+			Enabled: true,
+			Alexa:   true,
+			Google:  true,
+		},
+		Panel: json.RawMessage(`{
+			"assistant": {
+				"enabled": true,
+				"alexa": false,
+				"google": true
+			}
+		}`),
+	}
+	p2 := art2.AppProfile()
+	if p2.Assistant == nil || !p2.Assistant.Enabled || p2.Assistant.Alexa || !p2.Assistant.Google {
+		t.Errorf("Expected Alexa=false, Google=true in p2.Assistant, got %+v", p2.Assistant)
+	}
+
+	// 3. Artifact without assistant config
+	art3 := Artifact{TID: "tenant-1", PID: "prod-3"}
+	p3 := art3.AppProfile()
+	if p3.Assistant != nil {
+		t.Errorf("Expected nil Assistant for art3, got %+v", p3.Assistant)
+	}
+}
+
 func floatPtr(v float64) *float64 {
 	return &v
 }

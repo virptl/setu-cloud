@@ -101,6 +101,9 @@ func NewRouter(
 		r.Post("/revoke", oauthH.Revoke)
 	})
 
+	// ── Privacy Policy ────────────────────────────────────────────────────────
+	r.Get("/privacy", oauthH.PrivacyPolicy)
+
 	// ── Alexa Smart Home Skill ────────────────────────────────────────────────
 	r.Post("/alexa/smarthome", alexaH.ServeHTTP)
 

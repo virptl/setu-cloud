@@ -12,15 +12,38 @@ import (
 	"strings"
 )
 
+// AssistantConfig specifies voice assistant integrations (Alexa, Google Assistant, etc.) enabled for a product schema.
+type AssistantConfig struct {
+	Enabled bool `json:"enabled"`
+	Alexa   bool `json:"alexa"`
+	Google  bool `json:"google"`
+}
+
+func (a *AssistantConfig) Normalize() *AssistantConfig {
+	if a == nil {
+		return nil
+	}
+	res := *a
+	if res.Enabled && !res.Alexa && !res.Google {
+		res.Alexa = true
+		res.Google = true
+	}
+	if res.Alexa || res.Google {
+		res.Enabled = true
+	}
+	return &res
+}
+
 // Artifact is the released schema_version document stored in released_products.
 type Artifact struct {
-	TID         string          `json:"tid"`
-	PID         string          `json:"pid"`
-	Version     int             `json:"version"`
-	ContentHash string          `json:"content_hash"`
-	PublishedAt string          `json:"published_at"`
-	DPs         []DP            `json:"dps"`
-	Panel       json.RawMessage `json:"panel,omitempty"`
+	TID         string           `json:"tid"`
+	PID         string           `json:"pid"`
+	Version     int              `json:"version"`
+	ContentHash string           `json:"content_hash"`
+	PublishedAt string           `json:"published_at"`
+	DPs         []DP             `json:"dps"`
+	Panel       json.RawMessage  `json:"panel,omitempty"`
+	Assistant   *AssistantConfig `json:"assistant,omitempty"`
 }
 
 // DP is one unified data point: semantic facet + hardware facet.
@@ -161,6 +184,7 @@ type Profile struct {
 	TileMetricFormat string // empty if none
 	Theme            string
 	Groups           []Group
+	Assistant        *AssistantConfig
 }
 
 // AppProfile projects the artifact to the app capability profile (Shared
@@ -191,7 +215,8 @@ func (a *Artifact) AppProfile() Profile {
 			Title string `json:"title"`
 			DPs   []int  `json:"dps"`
 		} `json:"groups"`
-		Theme string `json:"theme"`
+		Theme     string           `json:"theme"`
+		Assistant *AssistantConfig `json:"assistant"`
 	}
 
 	hasPanel := false
@@ -199,6 +224,13 @@ func (a *Artifact) AppProfile() Profile {
 		if err := json.Unmarshal(a.Panel, &panel); err == nil {
 			hasPanel = true
 		}
+	}
+
+	var assistantCfg *AssistantConfig
+	if hasPanel && panel.Assistant != nil {
+		assistantCfg = panel.Assistant.Normalize()
+	} else if a.Assistant != nil {
+		assistantCfg = a.Assistant.Normalize()
 	}
 
 	if hasPanel {
@@ -331,6 +363,7 @@ func (a *Artifact) AppProfile() Profile {
 			TileMetricFormat: tileMetricFormat,
 			Theme:            panel.Theme,
 			Groups:           groups,
+			Assistant:        assistantCfg,
 		}
 	}
 
@@ -341,7 +374,7 @@ func (a *Artifact) AppProfile() Profile {
 		}
 	}
 
-	p := Profile{Capabilities: caps}
+	p := Profile{Capabilities: caps, Assistant: assistantCfg}
 	has := map[string]bool{}
 	for _, c := range caps {
 		has[c.Kind] = true

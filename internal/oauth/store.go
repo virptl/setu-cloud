@@ -112,14 +112,14 @@ func (s *Store) CreateAuthCode(ctx context.Context, clientID, userID, redirectUR
 // ExchangeAuthCode validates the code and returns the user + client it was issued to.
 // The code is consumed (used_at set) atomically. Returns error if invalid/expired/used.
 func (s *Store) ExchangeAuthCode(ctx context.Context, code, clientID, redirectURI string) (userID, scope string, err error) {
-	var id, storedClientID, storedRedirectURI string
+	var storedClientID, storedRedirectURI string
 	var usedAt *time.Time
 	var expiresAt time.Time
 
 	err = s.db.QueryRow(ctx, `
-		SELECT id, client_id, user_id, redirect_uri, scope, used_at, expires_at
+		SELECT client_id, user_id, redirect_uri, scope, used_at, expires_at
 		FROM oauth_auth_codes WHERE code=$1`,
-		code).Scan(&id, &storedClientID, &userID, &storedRedirectURI, &scope, &usedAt, &expiresAt)
+		code).Scan(&storedClientID, &userID, &storedRedirectURI, &scope, &usedAt, &expiresAt)
 	if err != nil {
 		return "", "", fmt.Errorf("invalid code")
 	}
@@ -136,7 +136,7 @@ func (s *Store) ExchangeAuthCode(ctx context.Context, code, clientID, redirectUR
 		return "", "", fmt.Errorf("code expired")
 	}
 
-	s.db.Exec(ctx, `UPDATE oauth_auth_codes SET used_at=NOW() WHERE id=$1`, id)
+	s.db.Exec(ctx, `UPDATE oauth_auth_codes SET used_at=NOW() WHERE code=$1`, code)
 	return userID, scope, nil
 }
 

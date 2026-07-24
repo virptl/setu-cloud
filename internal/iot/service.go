@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/setucore/setu-cloud/internal/app"
 	"github.com/setucore/setu-cloud/internal/config"
 	"github.com/setucore/setu-cloud/internal/mqtt"
 )
@@ -40,6 +41,10 @@ type Service struct {
 
 func New(db *pgxpool.Pool, cache *redis.Client, pub *mqtt.Publisher, cfg *config.Config) *Service {
 	return &Service{db: db, cache: cache, pub: pub, cfg: cfg}
+}
+
+func (s *Service) DB() *pgxpool.Pool {
+	return s.db
 }
 
 // ListDevicesForUser returns all devices owned by uid with their current reported DPS.
@@ -73,6 +78,21 @@ func (s *Service) ListDevicesForUser(ctx context.Context, uid string) ([]Device,
 	return out, nil
 }
 
+// ListDevicesForAssistant returns devices owned by uid filtered by assistant platform support ("alexa", "google", etc.).
+func (s *Service) ListDevicesForAssistant(ctx context.Context, uid, platform string) ([]Device, error) {
+	devices, err := s.ListDevicesForUser(ctx, uid)
+	if err != nil {
+		return nil, err
+	}
+	var filtered []Device
+	for _, d := range devices {
+		if app.IsAssistantSupported(ctx, s.db, d.PID, platform) {
+			filtered = append(filtered, d)
+		}
+	}
+	return filtered, nil
+}
+
 // OwnsDevice confirms that uid owns did and returns the device's platform tid and pid.
 // Returns ok=false if the device doesn't belong to this user.
 func (s *Service) OwnsDevice(ctx context.Context, uid, did string) (tid, pid string, ok bool) {
@@ -87,6 +107,18 @@ func (s *Service) OwnsDevice(ctx context.Context, uid, did string) (tid, pid str
 	s.db.QueryRow(ctx,
 		`SELECT tid, pid FROM devices WHERE did=$1 ORDER BY is_online DESC, last_seen_at DESC NULLS LAST LIMIT 1`,
 		did).Scan(&tid, &pid)
+	return tid, pid, true
+}
+
+// OwnsDeviceForAssistant confirms that uid owns did and that the device supports the specified assistant platform.
+func (s *Service) OwnsDeviceForAssistant(ctx context.Context, uid, did, platform string) (tid, pid string, ok bool) {
+	tid, pid, ok = s.OwnsDevice(ctx, uid, did)
+	if !ok {
+		return "", "", false
+	}
+	if !app.IsAssistantSupported(ctx, s.db, pid, platform) {
+		return "", "", false
+	}
 	return tid, pid, true
 }
 
